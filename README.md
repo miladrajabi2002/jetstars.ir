@@ -18,9 +18,10 @@ Open: `http://localhost:8080`
 ## Deploy on host
 
 1. Upload the whole project.
-2. Point web root to `public/`.
-3. Edit `config/config.php` with your domain and token.
-4. Ensure `storage/` is writable by PHP.
+2. **Recommended:** Point web root to `public/`.
+3. If your host cannot change web root (or it points to project root), keep the provided root `.htaccess` and `index.php` fallback files so requests are forwarded to `public/`.
+4. Edit `config/config.php` with your domain and token.
+5. Ensure `storage/` is writable by PHP.
 
 ## Important
 
