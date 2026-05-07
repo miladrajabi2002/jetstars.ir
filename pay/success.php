@@ -1,0 +1,34 @@
+<?php
+require_once __DIR__ . '/../includes/functions.php';
+header('Content-Type: application/json; charset=utf-8');
+
+$authority = $_POST['authority'] ?? $_GET['authority'] ?? null;
+$order_id  = $_POST['order_id'] ?? $_GET['order_id'] ?? null;
+if (!$authority || !$order_id) { http_response_code(404); echo json_encode(['success'=>false,'error'=>'missing params'], JSON_UNESCAPED_UNICODE); exit; }
+
+try {
+    $ch = curl_init('https://zarinpay.me/api/verify-payment');
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_POST, true);
+    curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode(['authority'=>$authority], JSON_UNESCAPED_UNICODE));
+    curl_setopt($ch, CURLOPT_HTTPHEADER, ['Content-Type: application/json','Authorization: Bearer ' . ZARINPAY_ACCESS_TOKEN]);
+    $response = curl_exec($ch);
+    if (curl_errno($ch)) throw new Exception('خطا در اتصال: ' . curl_error($ch));
+    curl_close($ch);
+    $result = json_decode($response, true);
+
+    $paidOrderId = $result['data']['transaction']['order_id'] ?? $order_id;
+    $paymentId = $result['data']['transaction']['payment_id'] ?? '';
+
+    if (!(isset($result['success']) && $result['success'] === true && (($result['data']['code'] ?? null) === 100))) {
+        throw new Exception('پرداخت انجام نشد');
+    }
+
+    [$changed, $order] = mark_order_paid($paidOrderId, $paymentId);
+    if (!$order) throw new Exception('سفارش یافت نشد');
+
+    echo json_encode(['success'=>true,'order'=>$paidOrderId,'changed'=>$changed], JSON_UNESCAPED_UNICODE); exit;
+} catch (Exception $e) {
+    http_response_code(500);
+    echo json_encode(['success'=>false, 'error'=>$e->getMessage()], JSON_UNESCAPED_UNICODE); exit;
+}
