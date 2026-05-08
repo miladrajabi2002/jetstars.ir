@@ -797,7 +797,7 @@ if (isset($_POST['action'])) {
     /* ── PRODUCTS GRID ── */
     .products-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(205px, 1fr));
+      grid-template-columns: repeat(3, 1fr);
       gap: 16px;
       margin-top: 20px
     }
