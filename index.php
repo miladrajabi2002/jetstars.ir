@@ -1,5 +1,5 @@
 <?php
-require_once __DIR__ . '/../includes/functions.php';
+require_once __DIR__ . '/includes/functions.php';
 
 /*
  * ┌─────────────────────────────────────────────────┐
@@ -171,7 +171,7 @@ if (isset($_POST['action'])) {
             'amount'           => ((int)$order['amount']) * 10,
             'order_id'         => $orderId,
             'customer_user_id' => $order['user_id'] ?: ('GUEST-' . $orderId),
-            'callback_url'     => SITE_URL . '/?cb=1&order_id=' . urlencode($orderId),
+            'callback_url'     => SITE_URL . '/pay/success.php?order_id=' . urlencode($orderId),
             'type'             => 'card',
             'store_id'         => 180,
         ];
@@ -622,11 +622,11 @@ function validateCustomer(c){
 
 /* ─── PAY ─── */
 async function submitAndPay(){
-  const errEl=document.getElementById('pay-error');
+  const errEl = document.getElementById('pay-error');
   errEl.classList.remove('show');
 
   if(!state.selectedId){
-    errEl.textContent='ابتدا یک محصول انتخاب کنید.';
+    errEl.textContent = 'ابتدا یک محصول انتخاب کنید.';
     errEl.classList.add('show');
     goToStep(1);
     return;
@@ -644,31 +644,45 @@ async function submitAndPay(){
   setBtnLoading('pay-btn','pay-spinner',true);
 
   try{
-    const fd1=new FormData();
-    fd1.append('action','order');
-    fd1.append('pid',state.selectedId);
-    fd1.append('quantity',state.quantity);
-    Object.entries(customer).forEach(([key,val])=>fd1.append(key,val));
+    const fd = new FormData();
+    fd.append('action', 'order');
+    fd.append('pid', state.selectedId);
+    fd.append('quantity', state.quantity);
+    Object.entries(customer).forEach(([key, val]) => fd.append(key, val));
 
-    const r1=await fetch('/',{method:'POST',body:fd1});
-    const d1=await r1.json();
-    if(!d1.ok) throw new Error(d1.msg || 'خطا در ثبت سفارش');
-    state.orderId=d1.order_id;
+    // چون index.php داخل ریشه پروژه است، درخواست را به همان صفحه فعلی می‌فرستیم.
+    // این روش هم روی لوکال، هم هاست، هم داخل ساب‌فولدر درست کار می‌کند.
+    const res = await fetch(window.location.pathname || 'index.php', {
+      method: 'POST',
+      body: fd,
+      headers: { 'X-Requested-With': 'XMLHttpRequest' }
+    });
 
-    const fd2=new FormData();
-    fd2.append('action','pay');
-    fd2.append('order_id',state.orderId);
-    const r2=await fetch('/',{method:'POST',body:fd2});
-    const d2=await r2.json();
-    if(!d2.ok) throw new Error(d2.msg || 'خطا در ایجاد درگاه پرداخت');
+    const text = await res.text();
+    let data;
+    try{
+      data = JSON.parse(text);
+    }catch(parseError){
+      throw new Error('پاسخ سرور JSON نبود. مسیر includes/functions.php یا خطای PHP را بررسی کن.');
+    }
 
-    showToast('در حال انتقال به درگاه پرداخت...');
-    setTimeout(()=>{ window.location.href=d2.redirect; }, 450);
+    if(!res.ok || !data.ok){
+      throw new Error(data.msg || 'خطا در ثبت سفارش');
+    }
+
+    state.orderId = data.order_id;
+    showToast('سفارش ثبت شد؛ در حال انتقال به صفحه پرداخت...');
+
+    // اتصال به فایل درگاه شما: /pay/pay.php
+    // pay.php خودش order_id را می‌گیرد و کاربر را به payment_link منتقل می‌کند.
+    setTimeout(() => {
+      window.location.href = 'pay/pay.php?order_id=' + encodeURIComponent(state.orderId);
+    }, 350);
+
   }catch(e){
     errEl.textContent = e.message || 'خطای غیرمنتظره رخ داد.';
     errEl.classList.add('show');
     updateStepsBar(2);
-  }finally{
     setBtnLoading('pay-btn','pay-spinner',false);
   }
 }
