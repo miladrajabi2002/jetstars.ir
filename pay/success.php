@@ -19,6 +19,21 @@ function json_read($file, $default = []) {
     return is_array($data) ? $data : $default;
 }
 
+function json_write($file, $data)
+{
+  $dir = dirname($file);
+
+  if (!is_dir($dir)) {
+    mkdir($dir, 0755, true);
+  }
+
+  file_put_contents(
+    $file,
+    json_encode($data, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT),
+    LOCK_EX
+  );
+} 
+
 function mark_order_paid($orderId, $paymentId = '')
 {
   $orders = json_read(DATA_DIR . 'orders.json', []);
