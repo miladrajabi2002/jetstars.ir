@@ -47,60 +47,61 @@ function json_write($file, $data)
  * │  desc   → short description shown on card       │
  * └─────────────────────────────────────────────────┘
  */
+
 $products = [
   [
     'id'    => 1,
-    'title' => 'اشتراک ChatGPT Plus',
-    'badge' => 'پرفروش',
+    'title' => 'گیفت کارت اپل ۱ دلاری',
+    'badge' => 'اقتصادی',
     'price' => 250000,
-    'desc'  => 'دسترسی نامحدود به GPT-4 و تمام ویژگی‌های پیشرفته',
-    'img'   => 'https://images.unsplash.com/photo-1677442135703-1787eea5ce01?q=80&w=800&auto=format&fit=crop',
-    'color' => '#10a37f',
+    'desc'  => 'مناسب شارژ Apple ID برای خرید اپلیکیشن، بازی، iCloud و سرویس‌های اپل',
+    'img'   => 'https://jetstars.ir/image/1.png',
+    'color' => '#555555',
   ],
   [
     'id'    => 2,
-    'title' => 'اشتراک Canva Pro',
+    'title' => 'گیفت کارت گوگل پلی ۱ دلاری',
     'badge' => '',
-    'price' => 500000,
-    'desc'  => 'ابزارهای طراحی حرفه‌ای، تمپلیت‌های پریمیوم و بدون واترمارک',
-    'img'   => 'https://images.unsplash.com/photo-1561070791-2526d30994b5?q=80&w=800&auto=format&fit=crop',
-    'color' => '#7d2ae8',
+    'price' => 250000,
+    'desc'  => 'مناسب خرید اپلیکیشن، بازی و آیتم‌های داخل برنامه در Google Play',
+    'img'   => 'https://jetstars.ir/image/2.png',
+    'color' => '#34A853',
   ],
   [
     'id'    => 3,
-    'title' => 'اشتراک TradingView',
-    'badge' => 'حرفه‌ای',
-    'price' => 1000000,
-    'desc'  => 'نمودارهای پیشرفته، اندیکاتورهای تخصصی و هشدارهای آنی',
-    'img'   => 'https://images.unsplash.com/photo-1611974789855-9c2a0a7236a3?q=80&w=800&auto=format&fit=crop',
-    'color' => '#2962ff',
+    'title' => 'گیفت کارت استیم ۲ دلاری',
+    'badge' => 'گیمینگ',
+    'price' => 500000,
+    'desc'  => 'شارژ کیف پول Steam برای خرید بازی، آیتم و محتوای دیجیتال',
+    'img'   => 'https://jetstars.ir/image/3.png',
+    'color' => '#171A21',
   ],
   [
     'id'    => 4,
-    'title' => 'اشتراک Spotify Family',
-    'badge' => '',
-    'price' => 1250000,
-    'desc'  => 'تا ۶ حساب کاربری، موزیک بدون تبلیغ و دانلود آفلاین',
-    'img'   => 'https://images.unsplash.com/photo-1614680376739-414d95ff43df?q=80&w=800&auto=format&fit=crop',
-    'color' => '#1db954',
+    'title' => 'استارز تلگرام 40 تایی',
+    'badge' => 'تلگرام',
+    'price' => 250000,
+    'desc'  => 'بسته 40 عددی Telegram Stars برای خریدهای درون‌برنامه‌ای، حمایت از کانال‌ها و استفاده در مینی‌اپ‌ها',
+    'img'   => 'https://jetstars.ir/image/4.png',
+    'color' => '#2AABEE',
   ],
   [
     'id'    => 5,
-    'title' => 'Netflix Premium',
-    'badge' => '4K',
-    'price' => 1500000,
-    'desc'  => 'تماشای همزمان ۴ دستگاه، کیفیت ۴K HDR و دانلود آفلاین',
-    'img'   => 'https://images.unsplash.com/photo-1574375927938-d5a98e8ffe85?q=80&w=800&auto=format&fit=crop',
-    'color' => '#e50914',
+    'title' => 'استارز تلگرام 100 تایی',
+    'badge' => 'تلگرام',
+    'price' => 500000,
+    'desc'  => 'بسته 100 عددی Telegram Stars برای حمایت از کانال‌ها، مینی‌اپ‌ها و پرداخت‌های داخل تلگرام',
+    'img'   => 'https://jetstars.ir/image/5.png',
+    'color' => '#2AABEE',
   ],
   [
     'id'    => 6,
-    'title' => 'Adobe Creative Cloud',
-    'badge' => 'کامل',
-    'price' => 2000000,
-    'desc'  => 'دسترسی به تمام نرم‌افزارهای Adobe از Photoshop تا Premiere',
-    'img'   => 'https://images.unsplash.com/photo-1572044162444-ad60f128bdea?q=80&w=800&auto=format&fit=crop',
-    'color' => '#ff0000',
+    'title' => 'استارز تلگرام 200 تایی',
+    'badge' => 'پیشنهادی',
+    'price' => 1000000,
+    'desc'  => 'بسته 200 عددی Telegram Stars برای استفاده بیشتر در امکانات پولی و پرداخت‌های داخل تلگرام',
+    'img'   => 'https://jetstars.ir/image/6.png',
+    'color' => '#229ED9',
   ],
 ];
 
@@ -249,6 +250,34 @@ if (isset($_POST['action'])) {
 
   echo json_encode(['ok' => false, 'msg' => 'درخواست نامعتبر است.']);
   exit;
+}
+
+/* ─── Handle payment callback (GET ?cb=1) ───────────────────── */
+$cbMsg = null;
+$cbOk  = false;
+if (isset($_GET['cb'])) {
+  $authority = $_GET['authority'] ?? null;
+  $orderId   = $_GET['order_id'] ?? null;
+  if ($authority && $orderId) {
+    $ch = curl_init('https://zarinpay.me/api/verify-payment');
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_POST, true);
+    curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode(['authority' => $authority], JSON_UNESCAPED_UNICODE));
+    curl_setopt($ch, CURLOPT_HTTPHEADER, ['Content-Type: application/json', 'Authorization: Bearer ' . ZARINPAY_ACCESS_TOKEN]);
+    $res = curl_exec($ch);
+    curl_close($ch);
+
+    $result = json_decode($res, true);
+    if (!empty($result['success']) && ($result['data']['code'] ?? null) === 100) {
+      $paidOid   = $result['data']['transaction']['order_id'] ?? $orderId;
+      $paymentId = $result['data']['transaction']['payment_id'] ?? '';
+      [$changed, $order] = mark_order_paid($paidOid, $paymentId);
+      $cbOk  = true;
+      $cbMsg = 'پرداخت با موفقیت انجام شد! شناسه پرداخت: ' . htmlspecialchars($paymentId);
+    } else {
+      $cbMsg = 'پرداخت ناموفق بود یا لغو شد.';
+    }
+  }
 }
 ?>
 <!doctype html>
@@ -786,20 +815,31 @@ if (isset($_POST['action'])) {
       font-size: 21px;
       font-weight: 900;
       color: var(--text);
-      margin-bottom: 4px
+      margin-bottom: 4px;
+      text-align: center;
     }
 
     .section-sub {
       font-size: 14px;
-      color: var(--muted)
+      color: var(--muted);
+      text-align: center;
     }
 
     /* ── PRODUCTS GRID ── */
     .products-grid {
       display: grid;
-      grid-template-columns: repeat(3, 1fr);
+      grid-template-columns: repeat(3, minmax(0, 1fr));
       gap: 16px;
-      margin-top: 20px
+      margin-top: 20px;
+    }
+    
+    .product-card-img {
+      width: 100%;
+      aspect-ratio: 4 / 3;
+      height: auto;
+      object-fit: cover;
+      object-position: center;
+      display: block;
     }
 
     .product-card {
@@ -821,12 +861,6 @@ if (isset($_POST['action'])) {
     .product-card.selected {
       border-color: var(--primary);
       box-shadow: 0 0 0 3px rgba(26, 115, 232, .12), var(--shadow-2)
-    }
-
-    .product-card-img {
-      width: 100%;
-      height: 132px;
-      object-fit: cover
     }
 
     .product-card-body {
@@ -1232,9 +1266,14 @@ if (isset($_POST['action'])) {
         grid-template-columns: 1fr
       }
 
-      .products-grid {
-        grid-template-columns: repeat(auto-fill, minmax(160px, 1fr))
-      }
+    .products-grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    
+    .product-card-img {
+      aspect-ratio: 4 / 3;
+      height: auto;
+    }
 
       .steps-section {
         padding-inline: 14px
@@ -1256,6 +1295,17 @@ if (isset($_POST['action'])) {
       .steps-progress {
         right: calc(16.666% + 16px);
         left: calc(16.666% + 16px)
+      }
+    }
+    
+    @media (max-width: 480px) {
+      .products-grid {
+        grid-template-columns: 1fr;
+      }
+    
+      .product-card-img {
+        aspect-ratio: 4 / 3;
+        height: auto;
       }
     }
   </style>
