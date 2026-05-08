@@ -142,17 +142,16 @@ function make_guest_order($product, $pid, $quantity, $customer)
     'quantity' => $quantity,
     'amount' => $amount,
     'customer' => $customer,
-
-    // چون لاگین حذف شده، برای درگاه از شماره موبایل به عنوان شناسه مشتری استفاده می‌کنیم
     'user_id' => $customer['phone'] ?: 'guest',
-
     'status' => 'PENDING',
     'created_at' => date('Y-m-d H:i:s'),
   ];
 
+  $order = $orders[$orderId];
+
   json_write(DATA_DIR . 'orders.json', $orders);
 
-  return $orderId;
+  return [$orderId, $order];
 }
 
 /* ─── Handle AJAX actions ─────────────────────────────────────── */
@@ -197,7 +196,7 @@ if (isset($_POST['action'])) {
       exit;
     }
 
-    [$orderId, $order] = make_guest_order($catalog[$pid], $customer, $quantity);
+     [$orderId, $order] = make_guest_order($catalog[$pid], $pid, $quantity, $customer);
     echo json_encode(['ok' => true, 'order_id' => $orderId, 'amount' => $order['amount']]);
     exit;
   }
