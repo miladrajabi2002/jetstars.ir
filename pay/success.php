@@ -1,5 +1,41 @@
 <?php
-require_once __DIR__ . '/../includes/functions.php';
+require_once __DIR__ . '/../config/config.php';
+
+date_default_timezone_set('Asia/Tehran');
+
+define('DATA_DIR', __DIR__ . '/../data/');
+
+function json_read($file, $default = []) {
+    if (!file_exists($file)) {
+        return $default;
+    }
+
+    $content = file_get_contents($file);
+    if (!$content) {
+        return $default;
+    }
+
+    $data = json_decode($content, true);
+    return is_array($data) ? $data : $default;
+}
+
+function mark_order_paid($orderId, $paymentId = '')
+{
+  $orders = json_read(DATA_DIR . 'orders.json', []);
+
+  if (empty($orderId) || !isset($orders[$orderId])) {
+    return [false, null];
+  }
+
+  $orders[$orderId]['status'] = 'PAID';
+  $orders[$orderId]['payment_id'] = $paymentId;
+  $orders[$orderId]['paid_at'] = date('Y-m-d H:i:s');
+
+  json_write(DATA_DIR . 'orders.json', $orders);
+
+  return [true, $orders[$orderId]];
+}
+
 header('Content-Type: application/json; charset=utf-8');
 
 $authority = $_POST['authority'] ?? $_GET['authority'] ?? null;
