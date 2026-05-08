@@ -250,34 +250,6 @@ if (isset($_POST['action'])) {
   echo json_encode(['ok' => false, 'msg' => 'درخواست نامعتبر است.']);
   exit;
 }
-
-/* ─── Handle payment callback (GET ?cb=1) ───────────────────── */
-$cbMsg = null;
-$cbOk  = false;
-if (isset($_GET['cb'])) {
-  $authority = $_GET['authority'] ?? null;
-  $orderId   = $_GET['order_id'] ?? null;
-  if ($authority && $orderId) {
-    $ch = curl_init('https://zarinpay.me/api/verify-payment');
-    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    curl_setopt($ch, CURLOPT_POST, true);
-    curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode(['authority' => $authority], JSON_UNESCAPED_UNICODE));
-    curl_setopt($ch, CURLOPT_HTTPHEADER, ['Content-Type: application/json', 'Authorization: Bearer ' . ZARINPAY_ACCESS_TOKEN]);
-    $res = curl_exec($ch);
-    curl_close($ch);
-
-    $result = json_decode($res, true);
-    if (!empty($result['success']) && ($result['data']['code'] ?? null) === 100) {
-      $paidOid   = $result['data']['transaction']['order_id'] ?? $orderId;
-      $paymentId = $result['data']['transaction']['payment_id'] ?? '';
-      [$changed, $order] = mark_order_paid($paidOid, $paymentId);
-      $cbOk  = true;
-      $cbMsg = 'پرداخت با موفقیت انجام شد! شناسه پرداخت: ' . htmlspecialchars($paymentId);
-    } else {
-      $cbMsg = 'پرداخت ناموفق بود یا لغو شد.';
-    }
-  }
-}
 ?>
 <!doctype html>
 <html lang="fa" dir="rtl">
