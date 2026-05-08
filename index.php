@@ -61,7 +61,7 @@ $products = [
   [
     'id'    => 2,
     'title' => 'گیفت کارت گوگل پلی ۱ دلاری',
-    'badge' => '',
+    'badge' => 'برنامه',
     'price' => 250000,
     'desc'  => 'مناسب خرید اپلیکیشن، بازی و آیتم‌های داخل برنامه در Google Play',
     'img'   => 'https://jetstars.ir/image/2.png',
