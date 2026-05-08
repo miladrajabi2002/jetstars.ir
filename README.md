@@ -11,6 +11,9 @@ A simple Persian-language storefront demo with:
 
 ```bash
 php -S 0.0.0.0:8080 -t public
+
+sudo chmod -R 775 /var/www/miladrajabi.com/jet/data
+sudo chown -R www-data:www-data /var/www/miladrajabi.com/jet/data
 ```
 
 Open: `http://localhost:8080`
