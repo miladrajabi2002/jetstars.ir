@@ -1,5 +1,21 @@
 <?php
-require_once __DIR__ . '/../includes/functions.php';
+date_default_timezone_set('Asia/Tehran');
+
+define('DATA_DIR', __DIR__ . '/../data/');
+
+function json_read($file, $default = []) {
+    if (!file_exists($file)) {
+        return $default;
+    }
+
+    $content = file_get_contents($file);
+    if (!$content) {
+        return $default;
+    }
+
+    $data = json_decode($content, true);
+    return is_array($data) ? $data : $default;
+}
 
 $order_id = $_GET['order_id'] ?? $_POST['order_id'] ?? null;
 if (!$order_id) { http_response_code(404); exit('order_id required'); }
