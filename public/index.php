@@ -1,6 +1,5 @@
 <?php
 require_once __DIR__ . '/../includes/functions.php';
-$user = current_user();
 
 /*
  * ┌─────────────────────────────────────────────────┐
@@ -9,7 +8,7 @@ $user = current_user();
  * │  price  → price in Toman (no commas)            │
  * │  badge  → optional tag (or empty string '')     │
  * │  img    → Unsplash URL or any image URL         │
- * │  desc   → short description shown on card      │
+ * │  desc   → short description shown on card       │
  * └─────────────────────────────────────────────────┘
  */
 $products = [
@@ -70,7 +69,53 @@ $products = [
 ];
 
 $catalog = [];
-foreach ($products as $p) $catalog[$p['id']] = ['title' => $p['title'], 'price' => $p['price']];
+foreach ($products as $p) {
+    $catalog[$p['id']] = [
+        'id'    => $p['id'],
+        'title' => $p['title'],
+        'price' => $p['price'],
+        'desc'  => $p['desc'],
+    ];
+}
+
+function clean_text($value, $max = 500) {
+    $value = trim((string)$value);
+    $value = preg_replace('/\s+/u', ' ', $value);
+    return mb_substr($value, 0, $max, 'UTF-8');
+}
+
+function only_digits($value, $max = 30) {
+    $value = preg_replace('/\D+/', '', (string)$value);
+    return substr($value, 0, $max);
+}
+
+function make_guest_order(array $product, array $customer, int $quantity) {
+    $orders = json_read(DATA_DIR . 'orders.json', []);
+
+    do {
+        $orderId = 'O' . date('ymd') . random_int(10000, 99999);
+    } while (isset($orders[$orderId]));
+
+    $amount = ((int)$product['price']) * $quantity;
+    $guestId = 'GUEST-' . substr(md5(($customer['email'] ?? '') . ($customer['phone'] ?? '') . $orderId), 0, 10);
+
+    $orders[$orderId] = [
+        'id'         => $orderId,
+        'user_id'    => $guestId,
+        'product_id' => $product['id'],
+        'product'    => $product['title'],
+        'unit_price' => (int)$product['price'],
+        'quantity'   => $quantity,
+        'amount'     => $amount,
+        'status'     => 'PENDING',
+        'payment_id' => '',
+        'customer'   => $customer,
+        'created_at' => date('c'),
+    ];
+
+    json_write(DATA_DIR . 'orders.json', $orders);
+    return [$orderId, $orders[$orderId]];
+}
 
 /* ─── Handle AJAX actions ─────────────────────────────────────── */
 if (isset($_POST['action'])) {
@@ -78,60 +123,59 @@ if (isset($_POST['action'])) {
 
     $action = $_POST['action'];
 
-    /* LOGIN / REGISTER */
-    if ($action === 'auth') {
-        $name     = trim($_POST['name'] ?? '');
-        $email    = strtolower(trim($_POST['email'] ?? ''));
-        $password = $_POST['password'] ?? '';
-        if (!$name || !$email || !$password) {
-            echo json_encode(['ok' => false, 'msg' => 'همه فیلدها الزامی است.']); exit;
-        }
-        $users = json_read(DATA_DIR . 'users.json', []);
-        foreach ($users as $id => $u) {
-            if ($u['email'] === $email && password_verify($password, $u['password'])) {
-                $_SESSION['uid'] = $id;
-                echo json_encode(['ok' => true, 'name' => $u['name']]); exit;
-            }
-        }
-        $id = 'U' . random_int(10000, 99999);
-        $users[$id] = ['id' => $id, 'name' => $name, 'email' => $email, 'password' => password_hash($password, PASSWORD_DEFAULT), 'balance' => 0];
-        json_write(DATA_DIR . 'users.json', $users);
-        $_SESSION['uid'] = $id;
-        echo json_encode(['ok' => true, 'name' => $name]); exit;
-    }
-
-    /* LOGOUT */
-    if ($action === 'logout') {
-        session_destroy();
-        echo json_encode(['ok' => true]); exit;
-    }
-
-    /* CREATE ORDER */
+    /* CREATE GUEST ORDER - no login/register needed */
     if ($action === 'order') {
         $pid = (int)($_POST['pid'] ?? 0);
-        if (!isset($catalog[$pid]) || !current_user()) {
-            echo json_encode(['ok' => false, 'msg' => 'خطا']); exit;
+        $quantity = max(1, min(99, (int)($_POST['quantity'] ?? 1)));
+
+        if (!isset($catalog[$pid])) {
+            echo json_encode(['ok' => false, 'msg' => 'محصول انتخاب‌شده معتبر نیست.']); exit;
         }
-        $orderId = create_order($_SESSION['uid'], $catalog[$pid]);
-        echo json_encode(['ok' => true, 'order_id' => $orderId]); exit;
+
+        $customer = [
+            'name'          => clean_text($_POST['name'] ?? '', 120),
+            'email'         => strtolower(clean_text($_POST['email'] ?? '', 160)),
+            'phone'         => only_digits($_POST['phone'] ?? '', 15),
+            'national_code' => only_digits($_POST['national_code'] ?? '', 10),
+            'address'       => clean_text($_POST['address'] ?? '', 500),
+            'notes'         => clean_text($_POST['notes'] ?? '', 1000),
+        ];
+
+        if (!$customer['name'] || !$customer['email'] || !$customer['phone'] || !$customer['national_code'] || !$customer['address']) {
+            echo json_encode(['ok' => false, 'msg' => 'نام، ایمیل، شماره تماس، کد ملی و آدرس الزامی است.']); exit;
+        }
+        if (!filter_var($customer['email'], FILTER_VALIDATE_EMAIL)) {
+            echo json_encode(['ok' => false, 'msg' => 'ایمیل واردشده معتبر نیست.']); exit;
+        }
+        if (strlen($customer['national_code']) !== 10) {
+            echo json_encode(['ok' => false, 'msg' => 'کد ملی باید ۱۰ رقم باشد.']); exit;
+        }
+        if (strlen($customer['phone']) < 10) {
+            echo json_encode(['ok' => false, 'msg' => 'شماره تماس معتبر نیست.']); exit;
+        }
+
+        [$orderId, $order] = make_guest_order($catalog[$pid], $customer, $quantity);
+        echo json_encode(['ok' => true, 'order_id' => $orderId, 'amount' => $order['amount']]); exit;
     }
 
     /* INITIATE PAYMENT */
     if ($action === 'pay') {
-        $orderId = $_POST['order_id'] ?? '';
+        $orderId = clean_text($_POST['order_id'] ?? '', 40);
         $orders  = json_read(DATA_DIR . 'orders.json', []);
         $order   = $orders[$orderId] ?? null;
-        if (!$order) { echo json_encode(['ok' => false, 'msg' => 'سفارش یافت نشد']); exit; }
+
+        if (!$order) { echo json_encode(['ok' => false, 'msg' => 'سفارش یافت نشد.']); exit; }
         if (($order['status'] ?? '') === 'PAID') { echo json_encode(['ok' => false, 'msg' => 'این سفارش قبلاً پرداخت شده است.']); exit; }
 
         $data = [
             'amount'           => ((int)$order['amount']) * 10,
             'order_id'         => $orderId,
-            'customer_user_id' => $order['user_id'],
+            'customer_user_id' => $order['user_id'] ?: ('GUEST-' . $orderId),
             'callback_url'     => SITE_URL . '/?cb=1&order_id=' . urlencode($orderId),
             'type'             => 'card',
             'store_id'         => 180,
         ];
+
         $ch = curl_init('https://zarinpay.me/api/create-payment');
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
         curl_setopt($ch, CURLOPT_POST, true);
@@ -140,14 +184,15 @@ if (isset($_POST['action'])) {
         $response = curl_exec($ch);
         if (curl_errno($ch)) { echo json_encode(['ok' => false, 'msg' => curl_error($ch)]); curl_close($ch); exit; }
         curl_close($ch);
+
         $result = json_decode($response, true);
         if (!empty($result['success']) && !empty($result['payment_link'])) {
             echo json_encode(['ok' => true, 'redirect' => $result['payment_link']]); exit;
         }
-        echo json_encode(['ok' => false, 'msg' => 'خطا در ایجاد درگاه', 'raw' => $result]); exit;
+        echo json_encode(['ok' => false, 'msg' => 'خطا در ایجاد درگاه پرداخت.', 'raw' => $result]); exit;
     }
 
-    echo json_encode(['ok' => false, 'msg' => 'unknown action']); exit;
+    echo json_encode(['ok' => false, 'msg' => 'درخواست نامعتبر است.']); exit;
 }
 
 /* ─── Handle payment callback (GET ?cb=1) ───────────────────── */
@@ -162,8 +207,9 @@ if (isset($_GET['cb'])) {
         curl_setopt($ch, CURLOPT_POST, true);
         curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode(['authority' => $authority], JSON_UNESCAPED_UNICODE));
         curl_setopt($ch, CURLOPT_HTTPHEADER, ['Content-Type: application/json', 'Authorization: Bearer ' . ZARINPAY_ACCESS_TOKEN]);
-        $res    = curl_exec($ch);
+        $res = curl_exec($ch);
         curl_close($ch);
+
         $result = json_decode($res, true);
         if (!empty($result['success']) && ($result['data']['code'] ?? null) === 100) {
             $paidOid   = $result['data']['transaction']['order_id'] ?? $orderId;
@@ -189,141 +235,95 @@ if (isset($_GET['cb'])) {
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 :root{
-  --md-sys-color-primary:#1a73e8;
-  --md-sys-color-primary-container:#d3e3fd;
-  --md-sys-color-on-primary:#fff;
-  --md-sys-color-surface:#f8faff;
-  --md-sys-color-surface-variant:#e8edf8;
-  --md-sys-color-on-surface:#1c1b1f;
-  --md-sys-color-on-surface-variant:#49454f;
-  --md-sys-color-outline:#79747e;
-  --md-sys-color-outline-variant:#cac4d0;
-  --md-elevation-1:0 1px 2px rgba(0,0,0,.08),0 2px 6px rgba(0,0,0,.06);
-  --md-elevation-2:0 1px 2px rgba(0,0,0,.1),0 4px 12px rgba(0,0,0,.08);
-  --md-elevation-3:0 2px 3px rgba(0,0,0,.1),0 8px 24px rgba(0,0,0,.1);
-  --radius-sm:8px;
-  --radius-md:12px;
-  --radius-lg:16px;
-  --radius-xl:28px;
+  --primary:#1a73e8;
+  --primary-dark:#0b4eb3;
+  --primary-soft:#d3e3fd;
+  --accent:#00d4ff;
+  --accent-2:#8b5cf6;
+  --surface:#f7faff;
+  --surface-2:#edf3ff;
+  --text:#161b22;
+  --muted:#5f6675;
+  --line:#d9e2f2;
+  --danger:#c5221f;
+  --success:#137333;
+  --shadow-1:0 8px 24px rgba(20,35,70,.08);
+  --shadow-2:0 18px 50px rgba(20,35,70,.13);
+  --shadow-glow:0 20px 55px rgba(26,115,232,.28);
+  --radius-sm:10px;
+  --radius-md:14px;
+  --radius-lg:20px;
+  --radius-xl:30px;
 }
-body{font-family:'Vazirmatn',sans-serif;background:var(--md-sys-color-surface);color:var(--md-sys-color-on-surface);min-height:100vh;overflow-x:hidden}
+html{scroll-behavior:smooth}
+body{font-family:'Vazirmatn',sans-serif;background:radial-gradient(circle at top left,#e9f3ff 0,#f8faff 34%,#f7faff 100%);color:var(--text);min-height:100vh;overflow-x:hidden}
 
 /* ── HEADER ── */
-.header{position:sticky;top:0;z-index:100;background:rgba(248,250,255,.92);backdrop-filter:blur(12px);border-bottom:1px solid var(--md-sys-color-outline-variant);padding:0 24px;height:64px;display:flex;align-items:center;justify-content:space-between}
-.header-logo{display:flex;align-items:center;gap:10px;font-weight:700;font-size:18px;color:var(--md-sys-color-primary);text-decoration:none}
-.header-logo .material-icons-round{font-size:26px}
-.header-actions{display:flex;align-items:center;gap:8px}
-.btn{display:inline-flex;align-items:center;gap:6px;border:none;cursor:pointer;font-family:'Vazirmatn',sans-serif;font-size:14px;font-weight:500;border-radius:100px;padding:10px 20px;transition:all .2s;text-decoration:none}
-.btn-filled{background:var(--md-sys-color-primary);color:#fff}
-.btn-filled:hover{background:#1557b0;box-shadow:var(--md-elevation-2)}
-.btn-tonal{background:var(--md-sys-color-primary-container);color:var(--md-sys-color-primary)}
-.btn-tonal:hover{background:#b8d0f9}
-.btn-text{background:transparent;color:var(--md-sys-color-primary)}
+.header{position:sticky;top:0;z-index:100;background:rgba(248,250,255,.78);backdrop-filter:blur(18px);border-bottom:1px solid rgba(217,226,242,.9);padding:0 24px;height:66px;display:flex;align-items:center;justify-content:space-between;box-shadow:0 8px 28px rgba(31,50,90,.04)}
+.header-logo{order:-1;display:flex;align-items:center;gap:12px;font-weight:900;font-size:19px;color:var(--primary);text-decoration:none;letter-spacing:-.2px}
+.logo-mark{width:42px;height:42px;border-radius:15px;display:flex;align-items:center;justify-content:center;color:#fff;background:linear-gradient(135deg,var(--primary),var(--accent-2));box-shadow:0 12px 28px rgba(26,115,232,.28), inset 0 1px 0 rgba(255,255,255,.35);position:relative;overflow:hidden}
+.logo-mark::after{content:"";position:absolute;inset:-40%;background:linear-gradient(120deg,transparent 35%,rgba(255,255,255,.45),transparent 65%);transform:translateX(-80%);animation:logoShine 4s ease-in-out infinite}
+.logo-mark .material-icons-round{font-size:24px;position:relative;z-index:1}
+/* اگر لوگوی اختصاصی ساختی، این img را از کامنت خارج کن و آدرس فایل لوگو را در src بگذار. */
+/* .logo-mark img{width:100%;height:100%;object-fit:cover;border-radius:15px;position:relative;z-index:2} */
+@keyframes logoShine{0%,55%{transform:translateX(-90%) rotate(8deg)}75%,100%{transform:translateX(90%) rotate(8deg)}}
+.header-actions{display:flex;align-items:center;gap:8px;color:var(--muted);font-size:13px;font-weight:700}
+.header-pill{display:flex;align-items:center;gap:7px;background:#fff;border:1px solid rgba(217,226,242,.9);border-radius:999px;padding:8px 13px;box-shadow:var(--shadow-1)}
+.header-pill .material-icons-round{font-size:17px;color:var(--primary)}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:7px;border:none;cursor:pointer;font-family:'Vazirmatn',sans-serif;font-size:14px;font-weight:700;border-radius:999px;padding:11px 22px;transition:all .22s;text-decoration:none;white-space:nowrap}
+.btn:disabled{opacity:.55;cursor:not-allowed;transform:none!important;box-shadow:none!important}
+.btn-filled{background:linear-gradient(135deg,var(--primary),var(--primary-dark));color:#fff;box-shadow:0 12px 28px rgba(26,115,232,.22)}
+.btn-filled:hover:not(:disabled){transform:translateY(-2px);box-shadow:var(--shadow-glow)}
+.btn-text{background:transparent;color:var(--primary)}
 .btn-text:hover{background:rgba(26,115,232,.08)}
-.btn-sm{padding:7px 16px;font-size:13px}
-.user-chip{display:flex;align-items:center;gap:8px;background:var(--md-sys-color-surface-variant);border-radius:100px;padding:6px 14px 6px 6px;font-size:13px;font-weight:500}
-.user-avatar{width:32px;height:32px;border-radius:50%;background:var(--md-sys-color-primary);color:#fff;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:700}
 
 /* ── HERO ── */
-.hero{position:relative;overflow:hidden;min-height:380px;display:flex;align-items:center;background:linear-gradient(135deg,#0d47a1 0%,#1a73e8 50%,#0097a7 100%)}
-.hero-bg-art{position:absolute;inset:0;overflow:hidden;pointer-events:none}
-.hero-circle{position:absolute;border-radius:50%;opacity:.15}
-.hero-c1{width:400px;height:400px;background:#fff;top:-100px;left:-80px}
-.hero-c2{width:300px;height:300px;background:#fff;bottom:-60px;right:10%;top:auto}
-.hero-c3{width:200px;height:200px;background:#00bcd4;top:40px;right:30%}
-.hero-inner{position:relative;z-index:2;max-width:1100px;margin:0 auto;padding:48px 24px;width:100%;display:flex;align-items:center;justify-content:space-between;gap:32px}
-.hero-text h2{font-size:clamp(24px,4vw,42px);font-weight:900;color:#fff;line-height:1.25;margin-bottom:14px}
-.hero-text p{font-size:16px;color:rgba(255,255,255,.82);max-width:440px;line-height:1.7;margin-bottom:24px}
-.hero-badges{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:28px}
-.hero-badge{background:rgba(255,255,255,.15);border:1px solid rgba(255,255,255,.3);color:#fff;font-size:12px;font-weight:500;padding:5px 14px;border-radius:100px;backdrop-filter:blur(4px)}
-.hero-art{flex-shrink:0;width:260px;display:flex;flex-direction:column;gap:10px}
-.hero-card-float{background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.2);backdrop-filter:blur(8px);border-radius:var(--radius-lg);padding:14px 18px;color:#fff;animation:floatUp 3s ease-in-out infinite}
-.hero-card-float:nth-child(2){animation-delay:1.5s}
-.hero-card-float .hcf-label{font-size:11px;opacity:.7;margin-bottom:4px}
-.hero-card-float .hcf-val{font-size:20px;font-weight:700}
-.hero-card-float .hcf-sub{font-size:12px;opacity:.8;margin-top:2px}
-@keyframes floatUp{0%,100%{transform:translateY(0)}50%{transform:translateY(-6px)}}
+.hero{position:relative;overflow:hidden;min-height:315px;display:flex;align-items:center;background:linear-gradient(135deg,#071d49 0%,#145bd8 47%,#05a9c7 100%);isolation:isolate}
+.hero::before{content:"";position:absolute;inset:0;background:radial-gradient(circle at 18% 25%,rgba(255,255,255,.28),transparent 26%),radial-gradient(circle at 78% 15%,rgba(0,212,255,.25),transparent 27%),linear-gradient(90deg,rgba(255,255,255,.08) 1px,transparent 1px),linear-gradient(0deg,rgba(255,255,255,.07) 1px,transparent 1px);background-size:auto,auto,46px 46px,46px 46px;opacity:.9;z-index:-2}
+.hero::after{content:"";position:absolute;width:450px;height:450px;border-radius:50%;background:linear-gradient(135deg,rgba(255,255,255,.18),rgba(255,255,255,0));left:-130px;top:-170px;filter:blur(.2px);z-index:-1;animation:pulseBlob 7s ease-in-out infinite}
+.hero-orb{position:absolute;border-radius:50%;filter:blur(4px);opacity:.55;pointer-events:none;animation:orbMove 9s ease-in-out infinite alternate}
+.hero-o1{width:90px;height:90px;right:10%;top:52px;background:#8b5cf6}
+.hero-o2{width:54px;height:54px;right:45%;bottom:38px;background:#00d4ff;animation-delay:1.4s}
+.hero-o3{width:70px;height:70px;left:18%;bottom:42px;background:#fff;opacity:.2;animation-delay:2.1s}
+@keyframes pulseBlob{0%,100%{transform:scale(1)}50%{transform:scale(1.08) translate(18px,12px)}}
+@keyframes orbMove{from{transform:translate3d(0,0,0) scale(1)}to{transform:translate3d(18px,-16px,0) scale(1.08)}}
+.hero-inner{position:relative;z-index:2;max-width:1100px;margin:0 auto;padding:38px 24px;width:100%;display:flex;align-items:center;justify-content:space-between;gap:30px}
+.hero-text h2{font-size:clamp(23px,3.4vw,38px);font-weight:900;color:#fff;line-height:1.25;margin-bottom:12px;text-shadow:0 8px 28px rgba(0,0,0,.25)}
+.hero-text p{font-size:15px;color:rgba(255,255,255,.84);max-width:465px;line-height:1.8;margin-bottom:20px}
+.hero-badges{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:0}
+.hero-badge{display:inline-flex;align-items:center;gap:5px;background:rgba(255,255,255,.14);border:1px solid rgba(255,255,255,.3);color:#fff;font-size:12px;font-weight:700;padding:6px 14px;border-radius:999px;backdrop-filter:blur(8px);box-shadow:inset 0 1px 0 rgba(255,255,255,.18)}
+.hero-art{flex-shrink:0;width:280px;display:grid;gap:12px;perspective:900px}
+.hero-card-float{background:rgba(255,255,255,.14);border:1px solid rgba(255,255,255,.24);backdrop-filter:blur(14px);border-radius:22px;padding:16px 18px;color:#fff;box-shadow:0 25px 65px rgba(0,0,0,.18);animation:floatUp 3.4s ease-in-out infinite;transform-style:preserve-3d}
+.hero-card-float:nth-child(2){animation-delay:1.1s;margin-right:32px}
+.hero-card-float .hcf-label{font-size:11px;opacity:.75;margin-bottom:5px}.hero-card-float .hcf-val{font-size:22px;font-weight:900}.hero-card-float .hcf-sub{font-size:12px;opacity:.84;margin-top:2px}
+@keyframes floatUp{0%,100%{transform:translateY(0) rotateX(0)}50%{transform:translateY(-8px) rotateX(4deg)}}
 
 /* ── STEPS BAR ── */
-.steps-section{max-width:1100px;margin:0 auto;padding:40px 24px 16px}
-.steps-bar{display:flex;align-items:flex-start;gap:0;position:relative}
-.step-item{flex:1;display:flex;flex-direction:column;align-items:center;text-align:center;position:relative;z-index:1}
-.step-connector{flex:1;height:2px;background:var(--md-sys-color-outline-variant);margin-top:20px;position:relative;top:0;transition:background .4s}
-.step-connector.done{background:var(--md-sys-color-primary)}
-.step-circle{width:40px;height:40px;border-radius:50%;border:2px solid var(--md-sys-color-outline-variant);background:#fff;display:flex;align-items:center;justify-content:center;font-size:16px;font-weight:700;color:var(--md-sys-color-outline);transition:all .4s;margin-bottom:10px}
-.step-circle .material-icons-round{font-size:20px}
-.step-item.active .step-circle{border-color:var(--md-sys-color-primary);background:var(--md-sys-color-primary);color:#fff;box-shadow:0 0 0 4px rgba(26,115,232,.18)}
-.step-item.done .step-circle{border-color:var(--md-sys-color-primary);background:var(--md-sys-color-primary);color:#fff}
-.step-label{font-size:13px;font-weight:500;color:var(--md-sys-color-on-surface-variant);margin-top:2px;transition:color .4s}
-.step-item.active .step-label,.step-item.done .step-label{color:var(--md-sys-color-primary)}
+.steps-section{max-width:1100px;margin:0 auto;padding:26px 24px 8px}
+.steps-shell{background:#fff;border:1px solid rgba(217,226,242,.95);border-radius:24px;padding:18px 18px 14px;box-shadow:var(--shadow-1)}
+.steps-bar{display:grid;grid-template-columns:1fr 1fr 1fr;align-items:start;position:relative;isolation:isolate}
+.steps-bar::before,.steps-progress{content:"";position:absolute;top:20px;right:calc(16.666% + 20px);left:calc(16.666% + 20px);height:4px;border-radius:999px;background:var(--line);z-index:-1}
+.steps-progress{left:auto;width:0;background:linear-gradient(90deg,var(--primary),var(--accent));transition:width .38s ease}
+.steps-progress[data-step="1"]{width:0}.steps-progress[data-step="2"]{width:calc(33.333% - 18px)}.steps-progress[data-step="3"]{width:calc(66.666% - 34px)}
+.step-item{display:flex;flex-direction:column;align-items:center;text-align:center;position:relative;z-index:1}
+.step-circle{width:44px;height:44px;border-radius:50%;border:3px solid var(--line);background:#fff;display:flex;align-items:center;justify-content:center;font-size:16px;font-weight:900;color:#8b95a8;transition:all .34s;margin-bottom:9px;box-shadow:0 0 0 6px #fff}
+.step-circle .material-icons-round{font-size:21px}.step-item.active .step-circle{border-color:var(--primary);background:linear-gradient(135deg,var(--primary),var(--accent-2));color:#fff;box-shadow:0 0 0 6px #fff,0 12px 28px rgba(26,115,232,.28)}.step-item.done .step-circle{border-color:var(--primary);background:var(--primary);color:#fff}.step-label{font-size:13px;font-weight:800;color:var(--muted);transition:color .34s}.step-item.active .step-label,.step-item.done .step-label{color:var(--primary)}
 
 /* ── PANELS ── */
-.panels{max-width:1100px;margin:0 auto;padding:8px 24px 48px}
-.panel{display:none;animation:panelIn .35s ease}
-.panel.visible{display:block}
-@keyframes panelIn{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:translateY(0)}}
+.panels{max-width:1100px;margin:0 auto;padding:8px 24px 50px}.panel{display:none;animation:panelIn .35s ease}.panel.visible{display:block}@keyframes panelIn{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:translateY(0)}}
+.section-title{font-size:21px;font-weight:900;color:var(--text);margin-bottom:4px}.section-sub{font-size:14px;color:var(--muted)}
 
 /* ── PRODUCTS GRID ── */
-.products-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:16px;margin-top:20px}
-.product-card{background:#fff;border-radius:var(--radius-lg);box-shadow:var(--md-elevation-1);overflow:hidden;cursor:pointer;transition:all .25s;border:2px solid transparent;position:relative}
-.product-card:hover{box-shadow:var(--md-elevation-3);transform:translateY(-3px)}
-.product-card.selected{border-color:var(--md-sys-color-primary);box-shadow:0 0 0 2px rgba(26,115,232,.15)}
-.product-card-img{width:100%;height:130px;object-fit:cover}
-.product-card-body{padding:14px}
-.product-card-badge{display:inline-block;font-size:10px;font-weight:700;padding:2px 8px;border-radius:100px;background:var(--md-sys-color-primary-container);color:var(--md-sys-color-primary);margin-bottom:6px}
-.product-card-title{font-size:14px;font-weight:700;line-height:1.45;margin-bottom:6px;color:var(--md-sys-color-on-surface)}
-.product-card-desc{font-size:11px;color:var(--md-sys-color-on-surface-variant);line-height:1.5;margin-bottom:10px}
-.product-card-price{font-size:16px;font-weight:900;color:var(--md-sys-color-primary)}
-.product-card-price span{font-size:11px;font-weight:400;color:var(--md-sys-color-on-surface-variant)}
-.product-card-check{position:absolute;top:8px;right:8px;width:24px;height:24px;border-radius:50%;background:var(--md-sys-color-primary);color:#fff;display:none;align-items:center;justify-content:center}
-.product-card-check .material-icons-round{font-size:16px}
-.product-card.selected .product-card-check{display:flex}
+.products-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(205px,1fr));gap:16px;margin-top:20px}.product-card{background:#fff;border-radius:22px;box-shadow:var(--shadow-1);overflow:hidden;cursor:pointer;transition:all .25s;border:2px solid transparent;position:relative}.product-card:hover{box-shadow:var(--shadow-2);transform:translateY(-5px)}.product-card.selected{border-color:var(--primary);box-shadow:0 0 0 3px rgba(26,115,232,.12),var(--shadow-2)}.product-card-img{width:100%;height:132px;object-fit:cover}.product-card-body{padding:14px}.product-card-badge{display:inline-block;font-size:10px;font-weight:900;padding:3px 9px;border-radius:999px;background:var(--primary-soft);color:var(--primary);margin-bottom:7px}.product-card-title{font-size:14px;font-weight:900;line-height:1.45;margin-bottom:6px;color:var(--text)}.product-card-desc{font-size:11px;color:var(--muted);line-height:1.6;margin-bottom:10px}.product-card-price{font-size:16px;font-weight:900;color:var(--primary)}.product-card-price span{font-size:11px;font-weight:500;color:var(--muted)}.product-card-check{position:absolute;top:10px;right:10px;width:28px;height:28px;border-radius:50%;background:linear-gradient(135deg,var(--primary),var(--accent-2));color:#fff;display:none;align-items:center;justify-content:center;box-shadow:0 10px 22px rgba(26,115,232,.3)}.product-card-check .material-icons-round{font-size:17px}.product-card.selected .product-card-check{display:flex}
 
-/* ── AUTH PANEL ── */
-.auth-card{background:#fff;border-radius:var(--radius-xl);box-shadow:var(--md-elevation-2);max-width:440px;margin:20px auto 0;padding:36px 32px}
-.auth-card h3{font-size:22px;font-weight:700;margin-bottom:6px}
-.auth-card p{font-size:14px;color:var(--md-sys-color-on-surface-variant);margin-bottom:28px}
-.form-field{margin-bottom:18px}
-.form-field label{display:block;font-size:13px;font-weight:500;color:var(--md-sys-color-on-surface-variant);margin-bottom:6px}
-.form-field input{width:100%;height:48px;border:1px solid var(--md-sys-color-outline-variant);border-radius:var(--radius-md);padding:0 14px;font-family:'Vazirmatn',sans-serif;font-size:14px;outline:none;transition:border-color .2s;background:#fff}
-.form-field input:focus{border-color:var(--md-sys-color-primary);box-shadow:0 0 0 3px rgba(26,115,232,.1)}
-.error-msg{background:#fce8e6;color:#c5221f;font-size:13px;padding:10px 14px;border-radius:var(--radius-sm);margin-bottom:16px;display:none}
-.error-msg.show{display:block}
+/* ── FORM + ORDER ── */
+.checkout-grid{display:grid;grid-template-columns:minmax(0,1.1fr) 380px;gap:18px;margin-top:20px;align-items:start}.checkout-card,.order-summary{background:#fff;border-radius:var(--radius-xl);box-shadow:var(--shadow-1);border:1px solid rgba(217,226,242,.9);padding:26px}.checkout-card h3,.order-summary h3{font-size:20px;font-weight:900;margin-bottom:6px}.checkout-card p{font-size:13px;color:var(--muted);line-height:1.8;margin-bottom:22px}.form-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}.form-field{margin-bottom:2px}.form-field.full{grid-column:1/-1}.form-field label{display:block;font-size:13px;font-weight:800;color:var(--muted);margin-bottom:7px}.form-field input,.form-field textarea{width:100%;border:1px solid var(--line);border-radius:15px;padding:0 14px;font-family:'Vazirmatn',sans-serif;font-size:14px;outline:none;transition:all .2s;background:#fbfdff;color:var(--text)}.form-field input{height:48px}.form-field textarea{min-height:96px;padding-top:12px;resize:vertical}.form-field input:focus,.form-field textarea:focus{border-color:var(--primary);background:#fff;box-shadow:0 0 0 4px rgba(26,115,232,.1)}.error-msg{background:#fce8e6;color:var(--danger);font-size:13px;padding:11px 14px;border-radius:13px;margin-top:14px;display:none;line-height:1.7}.error-msg.show{display:block}.order-product-preview{display:flex;align-items:center;gap:14px;background:linear-gradient(135deg,#f0f5ff,#f9fbff);border:1px solid rgba(217,226,242,.9);border-radius:20px;padding:14px;margin:18px 0}.order-product-preview img{width:66px;height:66px;object-fit:cover;border-radius:15px;box-shadow:0 10px 20px rgba(31,50,90,.12)}.order-product-preview h4{font-size:15px;font-weight:900;margin-bottom:4px}.order-product-preview p{font-size:12px;color:var(--muted);line-height:1.5}.quantity-box{display:flex;align-items:center;justify-content:space-between;background:#fff;border:1px solid var(--line);border-radius:18px;padding:12px 14px;margin-bottom:12px}.quantity-label{font-size:13px;font-weight:900;color:var(--muted)}.quantity-control{display:flex;align-items:center;gap:10px}.qty-btn{width:34px;height:34px;border-radius:50%;border:0;background:var(--surface-2);color:var(--primary);cursor:pointer;display:flex;align-items:center;justify-content:center;transition:.2s}.qty-btn:hover{background:var(--primary);color:#fff;transform:translateY(-1px)}.qty-num{font-size:18px;font-weight:900;min-width:28px;text-align:center}.order-row{display:flex;justify-content:space-between;gap:16px;padding:11px 0;border-bottom:1px solid var(--line);font-size:14px}.order-row .label{color:var(--muted)}.order-row .value{font-weight:900;text-align:left}.order-total{display:flex;justify-content:space-between;align-items:center;padding:18px 0 0;font-size:16px;font-weight:900}.order-total .amount{font-size:22px;font-weight:900;color:var(--primary)}.btn-pay{width:100%;margin-top:18px;padding:15px;font-size:16px;font-weight:900;border-radius:18px}.spinner{display:none;width:18px;height:18px;border:2px solid rgba(255,255,255,.42);border-top-color:#fff;border-radius:50%;animation:spin .7s linear infinite}@keyframes spin{to{transform:rotate(360deg)}}
 
-/* ── ORDER SUMMARY ── */
-.order-summary{background:#fff;border-radius:var(--radius-xl);box-shadow:var(--md-elevation-2);max-width:440px;margin:20px auto 0;padding:32px}
-.order-product-preview{display:flex;align-items:center;gap:16px;background:var(--md-sys-color-surface-variant);border-radius:var(--radius-lg);padding:16px;margin-bottom:24px}
-.order-product-preview img{width:64px;height:64px;object-fit:cover;border-radius:var(--radius-sm)}
-.order-product-preview h4{font-size:15px;font-weight:700;margin-bottom:4px}
-.order-product-preview p{font-size:13px;color:var(--md-sys-color-on-surface-variant)}
-.order-row{display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--md-sys-color-outline-variant);font-size:14px}
-.order-row:last-of-type{border-bottom:none}
-.order-row .label{color:var(--md-sys-color-on-surface-variant)}
-.order-row .value{font-weight:600}
-.order-total{display:flex;justify-content:space-between;align-items:center;padding:16px 0 0;font-size:16px;font-weight:700}
-.order-total .amount{font-size:22px;font-weight:900;color:var(--md-sys-color-primary)}
-.btn-pay{width:100%;margin-top:20px;padding:15px;font-size:16px;font-weight:700;border-radius:var(--radius-lg)}
-.spinner{display:none;width:18px;height:18px;border:2px solid rgba(255,255,255,.4);border-top-color:#fff;border-radius:50%;animation:spin .7s linear infinite}
-@keyframes spin{to{transform:rotate(360deg)}}
-
-/* ── RESULT ── */
-.result-card{background:#fff;border-radius:var(--radius-xl);box-shadow:var(--md-elevation-2);max-width:440px;margin:20px auto 0;padding:40px 32px;text-align:center}
-.result-icon{width:72px;height:72px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:36px;margin:0 auto 20px}
-.result-icon.success{background:#e6f4ea;color:#137333}
-.result-icon.fail{background:#fce8e6;color:#c5221f}
-.result-card h3{font-size:22px;font-weight:700;margin-bottom:8px}
-.result-card p{font-size:14px;color:var(--md-sys-color-on-surface-variant);line-height:1.7;margin-bottom:24px}
-
-/* ── TOAST ── */
-.toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%) translateY(100px);background:#1c1b1f;color:#fff;padding:14px 22px;border-radius:100px;font-size:14px;font-weight:500;z-index:9999;opacity:0;transition:all .4s;pointer-events:none;white-space:nowrap}
-.toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
-
-/* ── SECTION TITLE ── */
-.section-title{font-size:20px;font-weight:700;color:var(--md-sys-color-on-surface);margin-bottom:4px}
-.section-sub{font-size:14px;color:var(--md-sys-color-on-surface-variant)}
+/* ── RESULT + TOAST ── */
+.result-card{background:#fff;border-radius:var(--radius-xl);box-shadow:var(--shadow-2);max-width:440px;margin:20px auto 0;padding:38px 30px;text-align:center}.result-icon{width:72px;height:72px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:36px;margin:0 auto 20px}.result-icon.success{background:#e6f4ea;color:var(--success)}.result-icon.fail{background:#fce8e6;color:var(--danger)}.result-card h3{font-size:22px;font-weight:900;margin-bottom:8px}.result-card p{font-size:14px;color:var(--muted);line-height:1.8;margin-bottom:24px}.toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%) translateY(100px);background:#151922;color:#fff;padding:14px 22px;border-radius:999px;font-size:14px;font-weight:800;z-index:9999;opacity:0;transition:all .4s;pointer-events:none;white-space:nowrap;box-shadow:0 16px 40px rgba(0,0,0,.22)}.toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
 
 /* ── RESPONSIVE ── */
-@media(max-width:720px){.hero-art{display:none}.hero-inner{padding:36px 20px}.products-grid{grid-template-columns:repeat(auto-fill,minmax(160px,1fr))}.steps-bar{gap:0}.step-label{font-size:11px}}
+@media(max-width:860px){.hero-art{display:none}.hero{min-height:285px}.hero-inner{padding:34px 20px}.checkout-grid{grid-template-columns:1fr}.order-summary{order:-1}.header-pill{display:none}.form-grid{grid-template-columns:1fr}.products-grid{grid-template-columns:repeat(auto-fill,minmax(160px,1fr))}.steps-section{padding-inline:14px}.panels{padding-inline:14px}.step-label{font-size:11px}.steps-shell{padding:16px 8px 12px}.steps-bar::before,.steps-progress{right:calc(16.666% + 16px);left:calc(16.666% + 16px)}}
 </style>
 </head>
 <body>
@@ -331,58 +331,44 @@ body{font-family:'Vazirmatn',sans-serif;background:var(--md-sys-color-surface);c
 <!-- HEADER -->
 <header class="header">
   <a href="/" class="header-logo">
-    <span class="material-icons-round">rocket_launch</span>
-    JetStars
+    <span class="logo-mark">
+      <span class="material-icons-round">rocket_launch</span>
+      <!-- اگر لوگو داشتی، خط پایین را فعال کن و آدرس را عوض کن: -->
+      <!-- <img src="assets/logo.png" alt="JetStars Logo"> -->
+    </span>
+    <span>JetStars</span>
   </a>
   <div class="header-actions">
-    <div id="header-user" style="display:none">
-      <div class="user-chip">
-        <div class="user-avatar" id="user-avatar-letter">?</div>
-        <span id="user-display-name"></span>
-      </div>
-      <button class="btn btn-text btn-sm" onclick="doLogout()">
-        <span class="material-icons-round" style="font-size:16px">logout</span>
-        خروج
-      </button>
-    </div>
-    <button class="btn btn-filled btn-sm" id="header-login-btn" onclick="showLoginFromHeader()">
-      <span class="material-icons-round" style="font-size:16px">person</span>
-      ورود
-    </button>
+    <div class="header-pill"><span class="material-icons-round">verified_user</span> پرداخت امن</div>
+    <div class="header-pill"><span class="material-icons-round">support_agent</span> پشتیبانی سریع</div>
   </div>
 </header>
 
 <!-- HERO -->
 <section class="hero">
-  <div class="hero-bg-art">
-    <div class="hero-circle hero-c1"></div>
-    <div class="hero-circle hero-c2"></div>
-    <div class="hero-circle hero-c3"></div>
-  </div>
+  <span class="hero-orb hero-o1"></span>
+  <span class="hero-orb hero-o2"></span>
+  <span class="hero-orb hero-o3"></span>
   <div class="hero-inner">
     <div class="hero-text">
-      <h2>اشتراک‌های دیجیتال<br>با بهترین قیمت</h2>
-      <p>سریع انتخاب کن، ثبت کن و پرداخت کن. همه چیز در یک صفحه، بدون هیچ انتقالی.</p>
+      <h2>اشتراک‌های دیجیتال<br>سریع، امن و بدون دردسر</h2>
+      <p>محصولت را انتخاب کن، مشخصاتت را وارد کن، تعداد را تنظیم کن و مستقیم وارد پرداخت شو.</p>
       <div class="hero-badges">
-        <span class="hero-badge"><span class="material-icons-round" style="font-size:12px;vertical-align:-2px">flash_on</span> پرداخت فوری</span>
-        <span class="hero-badge"><span class="material-icons-round" style="font-size:12px;vertical-align:-2px">verified_user</span> درگاه امن</span>
-        <span class="hero-badge"><span class="material-icons-round" style="font-size:12px;vertical-align:-2px">support_agent</span> پشتیبانی ۲۴/۷</span>
+        <span class="hero-badge"><span class="material-icons-round" style="font-size:14px">bolt</span> خرید فوری</span>
+        <span class="hero-badge"><span class="material-icons-round" style="font-size:14px">lock</span> درگاه امن</span>
+        <span class="hero-badge"><span class="material-icons-round" style="font-size:14px">auto_awesome</span> تجربه ساده</span>
       </div>
-      <button class="btn btn-filled" style="background:#fff;color:#1a73e8;font-size:15px;padding:13px 28px" onclick="document.getElementById('products-panel').scrollIntoView({behavior:'smooth'})">
-        <span class="material-icons-round">shopping_bag</span>
-        شروع خرید
-      </button>
     </div>
     <div class="hero-art">
       <div class="hero-card-float">
-        <div class="hcf-label">سفارش‌های امروز</div>
-        <div class="hcf-val">۱,۲۴۷</div>
-        <div class="hcf-sub">↑ ۱۸٪ نسبت به دیروز</div>
+        <div class="hcf-label">زمان ثبت سفارش</div>
+        <div class="hcf-val">کمتر از ۱ دقیقه</div>
+        <div class="hcf-sub">بدون ورود و ثبت‌نام</div>
       </div>
       <div class="hero-card-float">
-        <div class="hcf-label">رضایت مشتریان</div>
-        <div class="hcf-val">۴.۹ / ۵</div>
-        <div class="hcf-sub">براساس ۳,۸۴۰ نظر</div>
+        <div class="hcf-label">پرداخت</div>
+        <div class="hcf-val">امن و سریع</div>
+        <div class="hcf-sub">انتقال مستقیم به درگاه</div>
       </div>
     </div>
   </div>
@@ -390,20 +376,21 @@ body{font-family:'Vazirmatn',sans-serif;background:var(--md-sys-color-surface);c
 
 <!-- STEPS BAR -->
 <div class="steps-section">
-  <div class="steps-bar" id="steps-bar">
-    <div class="step-item active" id="step-1">
-      <div class="step-circle"><span class="material-icons-round">shopping_cart</span></div>
-      <div class="step-label">انتخاب محصول</div>
-    </div>
-    <div class="step-connector" id="conn-1"></div>
-    <div class="step-item" id="step-2">
-      <div class="step-circle"><span class="material-icons-round">person</span></div>
-      <div class="step-label">ورود / ثبت‌نام</div>
-    </div>
-    <div class="step-connector" id="conn-2"></div>
-    <div class="step-item" id="step-3">
-      <div class="step-circle"><span class="material-icons-round">credit_card</span></div>
-      <div class="step-label">پرداخت</div>
+  <div class="steps-shell">
+    <div class="steps-bar" id="steps-bar">
+      <div class="steps-progress" id="steps-progress" data-step="1"></div>
+      <div class="step-item active" id="step-1">
+        <div class="step-circle"><span class="material-icons-round">shopping_cart</span></div>
+        <div class="step-label">انتخاب محصول</div>
+      </div>
+      <div class="step-item" id="step-2">
+        <div class="step-circle"><span class="material-icons-round">badge</span></div>
+        <div class="step-label">مشخصات سفارش</div>
+      </div>
+      <div class="step-item" id="step-3">
+        <div class="step-circle"><span class="material-icons-round">credit_card</span></div>
+        <div class="step-label">پرداخت</div>
+      </div>
     </div>
   </div>
 </div>
@@ -414,7 +401,7 @@ body{font-family:'Vazirmatn',sans-serif;background:var(--md-sys-color-surface);c
   <!-- PANEL 1: PRODUCTS -->
   <div class="panel visible" id="products-panel">
     <div class="section-title">محصولات</div>
-    <div class="section-sub">یک سرویس انتخاب کنید</div>
+    <div class="section-sub">روی محصول کلیک کنید؛ مستقیم وارد مرحله مشخصات می‌شوید.</div>
     <div class="products-grid">
       <?php foreach($products as $p): ?>
       <div class="product-card" onclick="selectProduct(<?=$p['id']?>, this)" data-id="<?=$p['id']?>">
@@ -429,76 +416,92 @@ body{font-family:'Vazirmatn',sans-serif;background:var(--md-sys-color-surface);c
       </div>
       <?php endforeach; ?>
     </div>
-    <div style="margin-top:24px;display:flex;justify-content:flex-end">
-      <button class="btn btn-filled" style="padding:13px 32px;font-size:15px" id="btn-next-1" onclick="goToStep2()" disabled>
-        ادامه
-        <span class="material-icons-round" style="font-size:18px">arrow_back</span>
-      </button>
-    </div>
   </div>
 
-  <!-- PANEL 2: AUTH -->
-  <div class="panel" id="auth-panel">
-    <div class="auth-card">
-      <h3>ورود یا ثبت‌نام</h3>
-      <p>با ایمیل و رمز عبور وارد شوید. اگر حساب ندارید، خودکار ساخته می‌شود.</p>
-      <div class="error-msg" id="auth-error"></div>
-      <div class="form-field">
-        <label>نام کامل</label>
-        <input type="text" id="auth-name" placeholder="مثال: علی احمدی">
-      </div>
-      <div class="form-field">
-        <label>ایمیل</label>
-        <input type="email" id="auth-email" placeholder="example@email.com">
-      </div>
-      <div class="form-field">
-        <label>رمز عبور</label>
-        <input type="password" id="auth-pass" placeholder="حداقل ۶ کاراکتر">
-      </div>
-      <button class="btn btn-filled btn-pay" id="auth-btn" onclick="doAuth()">
-        <span id="auth-spinner" class="spinner"></span>
-        ورود و ادامه
-      </button>
-      <button class="btn btn-text" style="width:100%;margin-top:10px;justify-content:center" onclick="goToStep(1)">
-        <span class="material-icons-round" style="font-size:16px">arrow_forward</span>
-        بازگشت
-      </button>
-    </div>
-  </div>
+  <!-- PANEL 2: CUSTOMER INFO + PAY -->
+  <div class="panel" id="details-panel">
+    <div class="section-title">مشخصات سفارش</div>
+    <div class="section-sub">اطلاعات را تکمیل کنید، تعداد را تنظیم کنید و پرداخت را بزنید.</div>
 
-  <!-- PANEL 3: CONFIRM + PAY -->
-  <div class="panel" id="pay-panel">
-    <div class="order-summary">
-      <h3 style="font-size:20px;font-weight:700;margin-bottom:20px">تأیید و پرداخت</h3>
-      <div class="order-product-preview" id="order-preview">
-        <img id="order-preview-img" src="" alt="">
-        <div>
-          <h4 id="order-preview-title"></h4>
-          <p id="order-preview-desc"></p>
+    <div class="checkout-grid">
+      <div class="checkout-card">
+        <h3>اطلاعات خریدار</h3>
+        <p>این اطلاعات برای ثبت و پیگیری سفارش ذخیره می‌شود. ورود و ثبت‌نام حذف شده است.</p>
+        <div class="form-grid">
+          <div class="form-field">
+            <label for="customer-name">نام و نام خانوادگی *</label>
+            <input type="text" id="customer-name" autocomplete="name" placeholder="مثال: علی احمدی">
+          </div>
+          <div class="form-field">
+            <label for="customer-email">ایمیل *</label>
+            <input type="email" id="customer-email" autocomplete="email" placeholder="example@email.com">
+          </div>
+          <div class="form-field">
+            <label for="customer-phone">شماره تماس *</label>
+            <input type="tel" id="customer-phone" inputmode="numeric" autocomplete="tel" placeholder="09123456789">
+          </div>
+          <div class="form-field">
+            <label for="customer-national">کد ملی *</label>
+            <input type="text" id="customer-national" inputmode="numeric" maxlength="10" placeholder="۱۰ رقم">
+          </div>
+          <div class="form-field full">
+            <label for="customer-address">آدرس *</label>
+            <textarea id="customer-address" placeholder="استان، شهر، آدرس کامل"></textarea>
+          </div>
+          <div class="form-field full">
+            <label for="customer-notes">توضیحات اضافه</label>
+            <textarea id="customer-notes" placeholder="اگر نکته‌ای درباره سفارش دارید بنویسید..."></textarea>
+          </div>
         </div>
+        <div class="error-msg" id="pay-error"></div>
       </div>
-      <div class="order-row">
-        <span class="label">قیمت محصول</span>
-        <span class="value" id="order-price-val"></span>
-      </div>
-      <div class="order-row">
-        <span class="label">کارمزد درگاه</span>
-        <span class="value" style="color:#137333">رایگان</span>
-      </div>
-      <div class="order-total">
-        <span>مبلغ قابل پرداخت</span>
-        <span class="amount" id="order-total-val"></span>
-      </div>
-      <div class="error-msg" id="pay-error"></div>
-      <button class="btn btn-filled btn-pay" id="pay-btn" onclick="doPay()">
-        <span id="pay-spinner" class="spinner"></span>
-        <span class="material-icons-round" style="font-size:18px">lock</span>
-        پرداخت امن
-      </button>
-      <button class="btn btn-text" style="width:100%;margin-top:10px;justify-content:center" onclick="goToStep(2)">
-        <span class="material-icons-round" style="font-size:16px">arrow_forward</span>
-        بازگشت
-      </button>
+
+      <aside class="order-summary">
+        <h3>خلاصه سفارش</h3>
+        <div class="order-product-preview" id="order-preview">
+          <img id="order-preview-img" src="" alt="">
+          <div>
+            <h4 id="order-preview-title"></h4>
+            <p id="order-preview-desc"></p>
+          </div>
+        </div>
+
+        <div class="quantity-box">
+          <span class="quantity-label">تعداد</span>
+          <div class="quantity-control">
+            <button class="qty-btn" type="button" onclick="changeQty(-1)" aria-label="کم کردن تعداد"><span class="material-icons-round">remove</span></button>
+            <span class="qty-num" id="qty-num">۱</span>
+            <button class="qty-btn" type="button" onclick="changeQty(1)" aria-label="زیاد کردن تعداد"><span class="material-icons-round">add</span></button>
+          </div>
+        </div>
+
+        <div class="order-row">
+          <span class="label">قیمت واحد</span>
+          <span class="value" id="order-price-val"></span>
+        </div>
+        <div class="order-row">
+          <span class="label">تعداد</span>
+          <span class="value" id="order-qty-val">۱</span>
+        </div>
+        <div class="order-row">
+          <span class="label">کارمزد درگاه</span>
+          <span class="value" style="color:var(--success)">رایگان</span>
+        </div>
+        <div class="order-total">
+          <span>مبلغ قابل پرداخت</span>
+          <span class="amount" id="order-total-val"></span>
+        </div>
+
+        <button class="btn btn-filled btn-pay" id="pay-btn" onclick="submitAndPay()">
+          <span id="pay-spinner" class="spinner"></span>
+          <span class="material-icons-round" style="font-size:19px">lock</span>
+          پرداخت امن
+        </button>
+        <button class="btn btn-text" style="width:100%;margin-top:10px" onclick="goToStep(1)">
+          <span class="material-icons-round" style="font-size:17px">arrow_forward</span>
+          تغییر محصول
+        </button>
+      </aside>
     </div>
   </div>
 
@@ -527,46 +530,19 @@ const PRODUCTS = <?=json_encode(array_values($products), JSON_UNESCAPED_UNICODE)
 let state = {
   step: 1,
   selectedId: null,
-  user: <?=$user ? json_encode(['name'=>$user['name']], JSON_UNESCAPED_UNICODE) : 'null'?>,
+  quantity: 1,
   orderId: null,
 };
-
-/* ─── INIT ─── */
-(function(){
-  if (state.user) showUserInHeader(state.user.name);
-  else hideUserInHeader();
-  <?php if($user): ?>
-  // Skip auth step if already logged in
-  <?php endif; ?>
-})();
-
-/* ─── HEADER ─── */
-function showUserInHeader(name){
-  document.getElementById('header-user').style.display='flex';
-  document.getElementById('header-user').style.alignItems='center';
-  document.getElementById('header-user').style.gap='8px';
-  document.getElementById('header-login-btn').style.display='none';
-  document.getElementById('user-display-name').textContent = name;
-  document.getElementById('user-avatar-letter').textContent = name.charAt(0);
-}
-function hideUserInHeader(){
-  document.getElementById('header-user').style.display='none';
-  document.getElementById('header-login-btn').style.display='';
-}
-function showLoginFromHeader(){
-  goToStep(2);
-  document.getElementById('auth-panel').scrollIntoView({behavior:'smooth'});
-}
 
 /* ─── STEP NAV ─── */
 function goToStep(n){
   document.querySelectorAll('.panel').forEach(p=>p.classList.remove('visible'));
   if(n===1) document.getElementById('products-panel').classList.add('visible');
-  if(n===2) document.getElementById('auth-panel').classList.add('visible');
-  if(n===3) document.getElementById('pay-panel').classList.add('visible');
+  if(n===2 || n===3) document.getElementById('details-panel').classList.add('visible');
   state.step = n;
   updateStepsBar(n);
-  window.scrollTo({top:200,behavior:'smooth'});
+  const topTarget = n === 1 ? document.getElementById('products-panel') : document.getElementById('details-panel');
+  topTarget.scrollIntoView({behavior:'smooth', block:'start'});
 }
 
 function updateStepsBar(n){
@@ -576,10 +552,7 @@ function updateStepsBar(n){
     if(i<n) el.classList.add('done');
     if(i===n) el.classList.add('active');
   }
-  for(let i=1;i<=2;i++){
-    const c=document.getElementById('conn-'+i);
-    c.classList.toggle('done', i<n);
-  }
+  document.getElementById('steps-progress').dataset.step = String(n);
 }
 
 /* ─── PRODUCTS ─── */
@@ -587,86 +560,117 @@ function selectProduct(id, el){
   document.querySelectorAll('.product-card').forEach(c=>c.classList.remove('selected'));
   el.classList.add('selected');
   state.selectedId = id;
-  document.getElementById('btn-next-1').disabled = false;
+  state.quantity = 1;
+  prepareOrderPanel();
+  goToStep(2);
+  showToast('محصول انتخاب شد؛ مشخصات سفارش را وارد کنید.');
 }
 
-function getProduct(id){ return PRODUCTS.find(p=>p.id===id); }
+function getProduct(id){ return PRODUCTS.find(p=>Number(p.id)===Number(id)); }
 
-function goToStep2(){
-  if(!state.selectedId) return;
-  if(state.user){
-    preparePayPanel();
-    goToStep(3);
-  } else {
-    goToStep(2);
-  }
-}
-
-/* ─── AUTH ─── */
-async function doAuth(){
-  const name=document.getElementById('auth-name').value.trim();
-  const email=document.getElementById('auth-email').value.trim();
-  const pass=document.getElementById('auth-pass').value;
-  const errEl=document.getElementById('auth-error');
-  errEl.classList.remove('show');
-  if(!name||!email||!pass){errEl.textContent='همه فیلدها الزامی است.';errEl.classList.add('show');return;}
-  setBtnLoading('auth-btn','auth-spinner',true);
-  const fd=new FormData();
-  fd.append('action','auth');fd.append('name',name);fd.append('email',email);fd.append('password',pass);
-  const res=await fetch('/',{method:'POST',body:fd});
-  const data=await res.json();
-  setBtnLoading('auth-btn','auth-spinner',false);
-  if(!data.ok){errEl.textContent=data.msg;errEl.classList.add('show');return;}
-  state.user={name:data.name};
-  showUserInHeader(data.name);
-  showToast('خوش آمدید، '+data.name+' 👋');
-  preparePayPanel();
-  goToStep(3);
-}
-
-/* ─── PAY PANEL PREP ─── */
-function preparePayPanel(){
+/* ─── ORDER PANEL ─── */
+function prepareOrderPanel(){
   const p=getProduct(state.selectedId);
   if(!p) return;
   document.getElementById('order-preview-img').src=p.img;
   document.getElementById('order-preview-title').textContent=p.title;
   document.getElementById('order-preview-desc').textContent=p.desc;
-  const priceStr=p.price.toLocaleString('fa-IR')+' تومان';
-  document.getElementById('order-price-val').textContent=priceStr;
-  document.getElementById('order-total-val').textContent=priceStr;
+  updateTotals();
+}
+
+function toFaNumber(value){
+  return Number(value).toLocaleString('fa-IR');
+}
+
+function money(value){
+  return Number(value).toLocaleString('fa-IR') + ' تومان';
+}
+
+function updateTotals(){
+  const p=getProduct(state.selectedId);
+  if(!p) return;
+  const total = Number(p.price) * state.quantity;
+  document.getElementById('qty-num').textContent = toFaNumber(state.quantity);
+  document.getElementById('order-qty-val').textContent = toFaNumber(state.quantity);
+  document.getElementById('order-price-val').textContent = money(p.price);
+  document.getElementById('order-total-val').textContent = money(total);
+}
+
+function changeQty(delta){
+  state.quantity = Math.max(1, Math.min(99, state.quantity + delta));
+  updateTotals();
+}
+
+function collectCustomer(){
+  return {
+    name: document.getElementById('customer-name').value.trim(),
+    email: document.getElementById('customer-email').value.trim(),
+    phone: document.getElementById('customer-phone').value.trim(),
+    national_code: document.getElementById('customer-national').value.trim(),
+    address: document.getElementById('customer-address').value.trim(),
+    notes: document.getElementById('customer-notes').value.trim(),
+  };
+}
+
+function validateCustomer(c){
+  if(!c.name || !c.email || !c.phone || !c.national_code || !c.address) return 'نام، ایمیل، شماره تماس، کد ملی و آدرس الزامی است.';
+  if(!/^\S+@\S+\.\S+$/.test(c.email)) return 'ایمیل واردشده معتبر نیست.';
+  if(c.phone.replace(/\D/g,'').length < 10) return 'شماره تماس معتبر نیست.';
+  if(c.national_code.replace(/\D/g,'').length !== 10) return 'کد ملی باید ۱۰ رقم باشد.';
+  return '';
 }
 
 /* ─── PAY ─── */
-async function doPay(){
+async function submitAndPay(){
   const errEl=document.getElementById('pay-error');
   errEl.classList.remove('show');
-  setBtnLoading('pay-btn','pay-spinner',true);
-  /* Step 1: create order */
-  const fd1=new FormData();
-  fd1.append('action','order');fd1.append('pid',state.selectedId);
-  const r1=await fetch('/',{method:'POST',body:fd1});
-  const d1=await r1.json();
-  if(!d1.ok){errEl.textContent=d1.msg||'خطا در ثبت سفارش';errEl.classList.add('show');setBtnLoading('pay-btn','pay-spinner',false);return;}
-  state.orderId=d1.order_id;
-  /* Step 2: get payment link */
-  const fd2=new FormData();
-  fd2.append('action','pay');fd2.append('order_id',state.orderId);
-  const r2=await fetch('/',{method:'POST',body:fd2});
-  const d2=await r2.json();
-  setBtnLoading('pay-btn','pay-spinner',false);
-  if(!d2.ok){errEl.textContent=d2.msg||'خطا در ایجاد درگاه';errEl.classList.add('show');return;}
-  showToast('در حال انتقال به درگاه پرداخت...');
-  setTimeout(()=>{ window.location.href=d2.redirect; }, 600);
-}
 
-/* ─── LOGOUT ─── */
-async function doLogout(){
-  const fd=new FormData();fd.append('action','logout');
-  await fetch('/',{method:'POST',body:fd});
-  state.user=null;
-  hideUserInHeader();
-  showToast('از حساب خارج شدید');
-  goToStep(1);
+  if(!state.selectedId){
+    errEl.textContent='ابتدا یک محصول انتخاب کنید.';
+    errEl.classList.add('show');
+    goToStep(1);
+    return;
+  }
+
+  const customer = collectCustomer();
+  const clientError = validateCustomer(customer);
+  if(clientError){
+    errEl.textContent = clientError;
+    errEl.classList.add('show');
+    return;
+  }
+
+  updateStepsBar(3);
+  setBtnLoading('pay-btn','pay-spinner',true);
+
+  try{
+    const fd1=new FormData();
+    fd1.append('action','order');
+    fd1.append('pid',state.selectedId);
+    fd1.append('quantity',state.quantity);
+    Object.entries(customer).forEach(([key,val])=>fd1.append(key,val));
+
+    const r1=await fetch('/',{method:'POST',body:fd1});
+    const d1=await r1.json();
+    if(!d1.ok) throw new Error(d1.msg || 'خطا در ثبت سفارش');
+    state.orderId=d1.order_id;
+
+    const fd2=new FormData();
+    fd2.append('action','pay');
+    fd2.append('order_id',state.orderId);
+    const r2=await fetch('/',{method:'POST',body:fd2});
+    const d2=await r2.json();
+    if(!d2.ok) throw new Error(d2.msg || 'خطا در ایجاد درگاه پرداخت');
+
+    showToast('در حال انتقال به درگاه پرداخت...');
+    setTimeout(()=>{ window.location.href=d2.redirect; }, 450);
+  }catch(e){
+    errEl.textContent = e.message || 'خطای غیرمنتظره رخ داد.';
+    errEl.classList.add('show');
+    updateStepsBar(2);
+  }finally{
+    setBtnLoading('pay-btn','pay-spinner',false);
+  }
 }
 
 /* ─── HELPERS ─── */
@@ -679,7 +683,8 @@ function setBtnLoading(btnId, spinnerId, loading){
 
 function showToast(msg){
   const t=document.getElementById('toast');
-  t.textContent=msg;t.classList.add('show');
+  t.textContent=msg;
+  t.classList.add('show');
   clearTimeout(t._t);
   t._t=setTimeout(()=>t.classList.remove('show'),3000);
 }
