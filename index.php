@@ -79,7 +79,7 @@ $products = [
   [
     'id'    => 4,
     'title' => 'استارز تلگرام 40 تایی',
-    'badge' => 'تلگرام',
+    'badge' => 'استارز',
     'price' => 250000,
     'desc'  => 'بسته 40 عددی Telegram Stars برای خریدهای درون‌برنامه‌ای، حمایت از کانال‌ها و استفاده در مینی‌اپ‌ها',
     'img'   => 'https://jetstars.ir/image/4.png',
@@ -88,7 +88,7 @@ $products = [
   [
     'id'    => 5,
     'title' => 'استارز تلگرام 100 تایی',
-    'badge' => 'تلگرام',
+    'badge' => 'استارز',
     'price' => 500000,
     'desc'  => 'بسته 100 عددی Telegram Stars برای حمایت از کانال‌ها، مینی‌اپ‌ها و پرداخت‌های داخل تلگرام',
     'img'   => 'https://jetstars.ir/image/5.png',
@@ -97,11 +97,38 @@ $products = [
   [
     'id'    => 6,
     'title' => 'استارز تلگرام 200 تایی',
-    'badge' => 'پیشنهادی',
+    'badge' => 'استارز',
     'price' => 1000000,
     'desc'  => 'بسته 200 عددی Telegram Stars برای استفاده بیشتر در امکانات پولی و پرداخت‌های داخل تلگرام',
     'img'   => 'https://jetstars.ir/image/6.png',
     'color' => '#229ED9',
+  ],
+  [
+    'id'    => 7,
+    'title' => 'شماره مجازی آمریکا',
+    'badge' => 'شماره مجازی',
+    'price' => 250000,
+    'desc'  => 'شماره مجازی کشور آمریکا با کد +1 مناسب فعال‌سازی و دریافت پیامک سرویس‌های مختلف',
+    'img'   => 'https://jetstars.ir/image/7.png',
+    'color' => '#1A73E8',
+  ],
+  [
+    'id'    => 8,
+    'title' => 'شماره مجازی روسیه',
+    'badge' => 'شماره مجازی',
+    'price' => 250000,
+    'desc'  => 'شماره مجازی کشور روسیه با کد +7 مناسب فعال‌سازی و دریافت پیامک سرویس‌های مختلف',
+    'img'   => 'https://jetstars.ir/image/8.png',
+    'color' => '#D52B1E',
+  ],
+  [
+    'id'    => 9,
+    'title' => 'شماره مجازی انگلستان',
+    'badge' => 'شماره مجازی',
+    'price' => 250000,
+    'desc'  => 'شماره مجازی کشور انگلستان با کد +44 مناسب فعال‌سازی و دریافت پیامک سرویس‌های مختلف',
+    'img'   => 'https://jetstars.ir/image/9.png',
+    'color' => '#012169',
   ],
 ];
 
@@ -1668,7 +1695,7 @@ if (isset($_GET['cb'])) {
         // اتصال به فایل درگاه شما: /pay/pay.php
         // pay.php خودش order_id را می‌گیرد و کاربر را به payment_link منتقل می‌کند.
         setTimeout(() => {
-          window.location.href = 'pay/pay.php?order_id=' + encodeURIComponent(state.orderId);
+          window.location.href = 'pay/pay.php?order_id=' + encodeURIComponent(state.orderId); 
         }, 350);
 
       } catch (e) {
