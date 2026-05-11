@@ -37,17 +37,6 @@ function json_write($file, $data)
   );
 }
 
-/*
- * ┌─────────────────────────────────────────────────┐
- * │  ✏️  EDIT YOUR PRODUCTS HERE                    │
- * │  title  → product name                          │
- * │  price  → price in Toman (no commas)            │
- * │  badge  → optional tag (or empty string '')     │
- * │  img    → Unsplash URL or any image URL         │
- * │  desc   → short description shown on card       │
- * └─────────────────────────────────────────────────┘
- */
-
 $products = [
   [
     'id'    => 1,
@@ -188,7 +177,6 @@ if (isset($_POST['action'])) {
 
   $action = $_POST['action'];
 
-  /* CREATE GUEST ORDER - no login/register needed */
   if ($action === 'order') {
     $pid = (int)($_POST['pid'] ?? 0);
     $quantity = max(1, min(99, (int)($_POST['quantity'] ?? 1)));
@@ -202,21 +190,16 @@ if (isset($_POST['action'])) {
       'name'          => clean_text($_POST['name'] ?? '', 120),
       'email'         => strtolower(clean_text($_POST['email'] ?? '', 160)),
       'phone'         => only_digits($_POST['phone'] ?? '', 15),
-      'national_code' => only_digits($_POST['national_code'] ?? '', 10),
-      'address'       => clean_text($_POST['address'] ?? '', 500),
+      'telegram'      => clean_text($_POST['telegram'] ?? '', 60),
       'notes'         => clean_text($_POST['notes'] ?? '', 1000),
     ];
 
-    if (!$customer['name'] || !$customer['email'] || !$customer['phone'] || !$customer['national_code'] || !$customer['address']) {
-      echo json_encode(['ok' => false, 'msg' => 'نام، ایمیل، شماره تماس، کد ملی و آدرس الزامی است.']);
+    if (!$customer['name'] || !$customer['email'] || !$customer['phone']) {
+      echo json_encode(['ok' => false, 'msg' => 'نام، ایمیل و شماره تماس الزامی است.']);
       exit;
     }
     if (!filter_var($customer['email'], FILTER_VALIDATE_EMAIL)) {
       echo json_encode(['ok' => false, 'msg' => 'ایمیل واردشده معتبر نیست.']);
-      exit;
-    }
-    if (strlen($customer['national_code']) !== 10) {
-      echo json_encode(['ok' => false, 'msg' => 'کد ملی باید ۱۰ رقم باشد.']);
       exit;
     }
     if (strlen($customer['phone']) < 10) {
@@ -224,87 +207,13 @@ if (isset($_POST['action'])) {
       exit;
     }
 
-     [$orderId, $order] = make_guest_order($catalog[$pid], $pid, $quantity, $customer);
+    [$orderId, $order] = make_guest_order($catalog[$pid], $pid, $quantity, $customer);
     echo json_encode(['ok' => true, 'order_id' => $orderId, 'amount' => $order['amount']]);
-    exit;
-  }
-
-  /* INITIATE PAYMENT */
-  if ($action === 'pay') {
-    $orderId = clean_text($_POST['order_id'] ?? '', 40);
-    $orders  = json_read(DATA_DIR . 'orders.json', []);
-    $order   = $orders[$orderId] ?? null;
-
-    if (!$order) {
-      echo json_encode(['ok' => false, 'msg' => 'سفارش یافت نشد.']);
-      exit;
-    }
-    if (($order['status'] ?? '') === 'PAID') {
-      echo json_encode(['ok' => false, 'msg' => 'این سفارش قبلاً پرداخت شده است.']);
-      exit;
-    }
-
-    $data = [
-      'amount'           => ((int)$order['amount']) * 10,
-      'order_id'         => $orderId,
-      'customer_user_id' => $order['user_id'] ?: ('GUEST-' . $orderId),
-      'callback_url'     => SITE_URL . '/pay/success.php?order_id=' . urlencode($orderId),
-      'type'             => 'card',
-      'store_id'         => 180,
-    ];
-
-    $ch = curl_init('https://zarinpay.me/api/create-payment');
-    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    curl_setopt($ch, CURLOPT_POST, true);
-    curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($data, JSON_UNESCAPED_UNICODE));
-    curl_setopt($ch, CURLOPT_HTTPHEADER, ['Content-Type: application/json', 'Authorization: Bearer ' . ZARINPAY_ACCESS_TOKEN]);
-    $response = curl_exec($ch);
-    if (curl_errno($ch)) {
-      echo json_encode(['ok' => false, 'msg' => curl_error($ch)]);
-      curl_close($ch);
-      exit;
-    }
-    curl_close($ch);
-
-    $result = json_decode($response, true);
-    if (!empty($result['success']) && !empty($result['payment_link'])) {
-      echo json_encode(['ok' => true, 'redirect' => $result['payment_link']]);
-      exit;
-    }
-    echo json_encode(['ok' => false, 'msg' => 'خطا در ایجاد درگاه پرداخت.', 'raw' => $result]);
     exit;
   }
 
   echo json_encode(['ok' => false, 'msg' => 'درخواست نامعتبر است.']);
   exit;
-}
-
-/* ─── Handle payment callback (GET ?cb=1) ───────────────────── */
-$cbMsg = null;
-$cbOk  = false;
-if (isset($_GET['cb'])) {
-  $authority = $_GET['authority'] ?? null;
-  $orderId   = $_GET['order_id'] ?? null;
-  if ($authority && $orderId) {
-    $ch = curl_init('https://zarinpay.me/api/verify-payment');
-    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    curl_setopt($ch, CURLOPT_POST, true);
-    curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode(['authority' => $authority], JSON_UNESCAPED_UNICODE));
-    curl_setopt($ch, CURLOPT_HTTPHEADER, ['Content-Type: application/json', 'Authorization: Bearer ' . ZARINPAY_ACCESS_TOKEN]);
-    $res = curl_exec($ch);
-    curl_close($ch);
-
-    $result = json_decode($res, true);
-    if (!empty($result['success']) && ($result['data']['code'] ?? null) === 100) {
-      $paidOid   = $result['data']['transaction']['order_id'] ?? $orderId;
-      $paymentId = $result['data']['transaction']['payment_id'] ?? '';
-      [$changed, $order] = mark_order_paid($paidOid, $paymentId);
-      $cbOk  = true;
-      $cbMsg = 'پرداخت با موفقیت انجام شد! شناسه پرداخت: ' . htmlspecialchars($paymentId);
-    } else {
-      $cbMsg = 'پرداخت ناموفق بود یا لغو شد.';
-    }
-  }
 }
 ?>
 <!doctype html>
@@ -348,9 +257,7 @@ if (isset($_GET['cb'])) {
       --radius-xl: 30px;
     }
 
-    html {
-      scroll-behavior: smooth
-    }
+    html { scroll-behavior: smooth }
 
     body {
       font-family: 'Vazirmatn', sans-serif;
@@ -359,6 +266,44 @@ if (isset($_GET['cb'])) {
       min-height: 100vh;
       overflow-x: hidden
     }
+
+    /* ── SCROLL ANIMATIONS ── */
+    .reveal {
+      opacity: 0;
+      transform: translateY(32px);
+      transition: opacity .6s cubic-bezier(.22,1,.36,1), transform .6s cubic-bezier(.22,1,.36,1);
+    }
+    .reveal.visible {
+      opacity: 1;
+      transform: translateY(0);
+    }
+    .reveal-left {
+      opacity: 0;
+      transform: translateX(32px);
+      transition: opacity .6s cubic-bezier(.22,1,.36,1), transform .6s cubic-bezier(.22,1,.36,1);
+    }
+    .reveal-left.visible {
+      opacity: 1;
+      transform: translateX(0);
+    }
+    .reveal-scale {
+      opacity: 0;
+      transform: scale(.92);
+      transition: opacity .5s cubic-bezier(.22,1,.36,1), transform .5s cubic-bezier(.22,1,.36,1);
+    }
+    .reveal-scale.visible {
+      opacity: 1;
+      transform: scale(1);
+    }
+    .stagger-1 { transition-delay: .05s }
+    .stagger-2 { transition-delay: .12s }
+    .stagger-3 { transition-delay: .19s }
+    .stagger-4 { transition-delay: .26s }
+    .stagger-5 { transition-delay: .33s }
+    .stagger-6 { transition-delay: .40s }
+    .stagger-7 { transition-delay: .47s }
+    .stagger-8 { transition-delay: .54s }
+    .stagger-9 { transition-delay: .61s }
 
     /* ── HEADER ── */
     .header {
@@ -417,19 +362,9 @@ if (isset($_GET['cb'])) {
       z-index: 1
     }
 
-    /* اگر لوگوی اختصاصی ساختی، این img را از کامنت خارج کن و آدرس فایل لوگو را در src بگذار. */
-    /* .logo-mark img{width:100%;height:100%;object-fit:cover;border-radius:15px;position:relative;z-index:2} */
     @keyframes logoShine {
-
-      0%,
-      55% {
-        transform: translateX(-90%) rotate(8deg)
-      }
-
-      75%,
-      100% {
-        transform: translateX(90%) rotate(8deg)
-      }
+      0%, 55% { transform: translateX(-90%) rotate(8deg) }
+      75%, 100% { transform: translateX(90%) rotate(8deg) }
     }
 
     .header-actions {
@@ -497,9 +432,7 @@ if (isset($_GET['cb'])) {
       color: var(--primary)
     }
 
-    .btn-text:hover {
-      background: rgba(26, 115, 232, .08)
-    }
+    .btn-text:hover { background: rgba(26, 115, 232, .08) }
 
     /* ── HERO ── */
     .hero {
@@ -516,7 +449,10 @@ if (isset($_GET['cb'])) {
       content: "";
       position: absolute;
       inset: 0;
-      background: radial-gradient(circle at 18% 25%, rgba(255, 255, 255, .28), transparent 26%), radial-gradient(circle at 78% 15%, rgba(0, 212, 255, .25), transparent 27%), linear-gradient(90deg, rgba(255, 255, 255, .08) 1px, transparent 1px), linear-gradient(0deg, rgba(255, 255, 255, .07) 1px, transparent 1px);
+      background: radial-gradient(circle at 18% 25%, rgba(255, 255, 255, .28), transparent 26%),
+                  radial-gradient(circle at 78% 15%, rgba(0, 212, 255, .25), transparent 27%),
+                  linear-gradient(90deg, rgba(255, 255, 255, .08) 1px, transparent 1px),
+                  linear-gradient(0deg, rgba(255, 255, 255, .07) 1px, transparent 1px);
       background-size: auto, auto, 46px 46px, 46px 46px;
       opacity: .9;
       z-index: -2
@@ -545,53 +481,18 @@ if (isset($_GET['cb'])) {
       animation: orbMove 9s ease-in-out infinite alternate
     }
 
-    .hero-o1 {
-      width: 90px;
-      height: 90px;
-      right: 10%;
-      top: 52px;
-      background: #8b5cf6
-    }
-
-    .hero-o2 {
-      width: 54px;
-      height: 54px;
-      right: 45%;
-      bottom: 38px;
-      background: #00d4ff;
-      animation-delay: 1.4s
-    }
-
-    .hero-o3 {
-      width: 70px;
-      height: 70px;
-      left: 18%;
-      bottom: 42px;
-      background: #fff;
-      opacity: .2;
-      animation-delay: 2.1s
-    }
+    .hero-o1 { width: 90px; height: 90px; right: 10%; top: 52px; background: #8b5cf6 }
+    .hero-o2 { width: 54px; height: 54px; right: 45%; bottom: 38px; background: #00d4ff; animation-delay: 1.4s }
+    .hero-o3 { width: 70px; height: 70px; left: 18%; bottom: 42px; background: #fff; opacity: .2; animation-delay: 2.1s }
 
     @keyframes pulseBlob {
-
-      0%,
-      100% {
-        transform: scale(1)
-      }
-
-      50% {
-        transform: scale(1.08) translate(18px, 12px)
-      }
+      0%, 100% { transform: scale(1) }
+      50% { transform: scale(1.08) translate(18px, 12px) }
     }
 
     @keyframes orbMove {
-      from {
-        transform: translate3d(0, 0, 0) scale(1)
-      }
-
-      to {
-        transform: translate3d(18px, -16px, 0) scale(1.08)
-      }
+      from { transform: translate3d(0, 0, 0) scale(1) }
+      to { transform: translate3d(18px, -16px, 0) scale(1.08) }
     }
 
     .hero-inner {
@@ -628,7 +529,7 @@ if (isset($_GET['cb'])) {
       display: flex;
       gap: 8px;
       flex-wrap: wrap;
-      margin-bottom: 0
+      margin-bottom: 16px;
     }
 
     .hero-badge {
@@ -646,58 +547,101 @@ if (isset($_GET['cb'])) {
       box-shadow: inset 0 1px 0 rgba(255, 255, 255, .18)
     }
 
+    /* ── ENAMAD BADGE IN HERO ── */
+    .hero-enamad {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-top: 4px;
+    }
+    .hero-enamad a {
+      display: inline-block;
+      transition: transform .2s, filter .2s;
+      filter: drop-shadow(0 4px 12px rgba(0,0,0,.25));
+    }
+    .hero-enamad a:hover {
+      transform: translateY(-2px) scale(1.05);
+      filter: drop-shadow(0 8px 18px rgba(0,0,0,.3));
+    }
+    .hero-enamad img {
+      width: 72px;
+      height: auto;
+      border-radius: 10px;
+    }
+    .hero-enamad-label {
+      font-size: 11px;
+      color: rgba(255,255,255,.75);
+      font-weight: 700;
+      line-height: 1.5;
+    }
+
+    /* ── HERO CARDS (improved) ── */
     .hero-art {
       flex-shrink: 0;
-      width: 280px;
+      width: 300px;
       display: grid;
-      gap: 12px;
+      gap: 14px;
       perspective: 900px
     }
 
     .hero-card-float {
-      background: rgba(255, 255, 255, .14);
-      border: 1px solid rgba(255, 255, 255, .24);
-      backdrop-filter: blur(14px);
-      border-radius: 22px;
-      padding: 16px 18px;
+      background: rgba(255, 255, 255, .13);
+      border: 1px solid rgba(255, 255, 255, .28);
+      backdrop-filter: blur(18px);
+      border-radius: 24px;
+      padding: 20px 22px;
       color: #fff;
-      box-shadow: 0 25px 65px rgba(0, 0, 0, .18);
+      box-shadow: 0 25px 65px rgba(0, 0, 0, .18), inset 0 1px 0 rgba(255,255,255,.2);
       animation: floatUp 3.4s ease-in-out infinite;
-      transform-style: preserve-3d
+      transform-style: preserve-3d;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      text-align: center;
+      gap: 6px;
     }
 
     .hero-card-float:nth-child(2) {
       animation-delay: 1.1s;
-      margin-right: 32px
+      margin-right: 28px;
+    }
+
+    .hero-card-float .hcf-icon {
+      width: 44px;
+      height: 44px;
+      border-radius: 14px;
+      background: rgba(255,255,255,.18);
+      border: 1px solid rgba(255,255,255,.25);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-bottom: 4px;
+    }
+    .hero-card-float .hcf-icon .material-icons-round {
+      font-size: 22px;
+      color: #fff;
     }
 
     .hero-card-float .hcf-label {
       font-size: 11px;
-      opacity: .75;
-      margin-bottom: 5px
+      opacity: .72;
+      font-weight: 600;
     }
 
     .hero-card-float .hcf-val {
-      font-size: 22px;
-      font-weight: 900
+      font-size: 20px;
+      font-weight: 900;
+      letter-spacing: -.3px;
     }
 
     .hero-card-float .hcf-sub {
-      font-size: 12px;
-      opacity: .84;
-      margin-top: 2px
+      font-size: 11.5px;
+      opacity: .78;
     }
 
     @keyframes floatUp {
-
-      0%,
-      100% {
-        transform: translateY(0) rotateX(0)
-      }
-
-      50% {
-        transform: translateY(-8px) rotateX(4deg)
-      }
+      0%, 100% { transform: translateY(0) rotateX(0) }
+      50% { transform: translateY(-8px) rotateX(4deg) }
     }
 
     /* ── STEPS BAR ── */
@@ -743,17 +687,9 @@ if (isset($_GET['cb'])) {
       transition: width .38s ease
     }
 
-    .steps-progress[data-step="1"] {
-      width: 0
-    }
-
-    .steps-progress[data-step="2"] {
-      width: calc(33.333% - 18px)
-    }
-
-    .steps-progress[data-step="3"] {
-      width: calc(66.666% - 34px)
-    }
+    .steps-progress[data-step="1"] { width: 0 }
+    .steps-progress[data-step="2"] { width: calc(33.333% - 18px) }
+    .steps-progress[data-step="3"] { width: calc(66.666% - 34px) }
 
     .step-item {
       display: flex;
@@ -781,15 +717,29 @@ if (isset($_GET['cb'])) {
       box-shadow: 0 0 0 6px #fff
     }
 
-    .step-circle .material-icons-round {
-      font-size: 21px
-    }
+    .step-circle .material-icons-round { font-size: 21px }
 
     .step-item.active .step-circle {
       border-color: var(--primary);
       background: linear-gradient(135deg, var(--primary), var(--accent-2));
       color: #fff;
       box-shadow: 0 0 0 6px #fff, 0 12px 28px rgba(26, 115, 232, .28)
+    }
+
+    /* Step circle pulse animation when active */
+    .step-item.active .step-circle::after {
+      content: '';
+      position: absolute;
+      width: 44px;
+      height: 44px;
+      border-radius: 50%;
+      border: 2px solid var(--primary);
+      animation: stepPulse 1.8s ease-out infinite;
+    }
+
+    @keyframes stepPulse {
+      0% { transform: scale(1); opacity: .6 }
+      100% { transform: scale(1.7); opacity: 0 }
     }
 
     .step-item.done .step-circle {
@@ -806,9 +756,7 @@ if (isset($_GET['cb'])) {
     }
 
     .step-item.active .step-label,
-    .step-item.done .step-label {
-      color: var(--primary)
-    }
+    .step-item.done .step-label { color: var(--primary) }
 
     /* ── PANELS ── */
     .panels {
@@ -822,20 +770,11 @@ if (isset($_GET['cb'])) {
       animation: panelIn .35s ease
     }
 
-    .panel.visible {
-      display: block
-    }
+    .panel.visible { display: block }
 
     @keyframes panelIn {
-      from {
-        opacity: 0;
-        transform: translateY(16px)
-      }
-
-      to {
-        opacity: 1;
-        transform: translateY(0)
-      }
+      from { opacity: 0; transform: translateY(16px) }
+      to { opacity: 1; transform: translateY(0) }
     }
 
     .section-title {
@@ -859,7 +798,7 @@ if (isset($_GET['cb'])) {
       gap: 16px;
       margin-top: 20px;
     }
-    
+
     .product-card-img {
       width: 100%;
       aspect-ratio: 4 / 3;
@@ -890,9 +829,7 @@ if (isset($_GET['cb'])) {
       box-shadow: 0 0 0 3px rgba(26, 115, 232, .12), var(--shadow-2)
     }
 
-    .product-card-body {
-      padding: 14px
-    }
+    .product-card-body { padding: 14px }
 
     .product-card-badge {
       display: inline-block;
@@ -947,13 +884,8 @@ if (isset($_GET['cb'])) {
       box-shadow: 0 10px 22px rgba(26, 115, 232, .3)
     }
 
-    .product-card-check .material-icons-round {
-      font-size: 17px
-    }
-
-    .product-card.selected .product-card-check {
-      display: flex
-    }
+    .product-card-check .material-icons-round { font-size: 17px }
+    .product-card.selected .product-card-check { display: flex }
 
     /* ── FORM + ORDER ── */
     .checkout-grid {
@@ -987,19 +919,43 @@ if (isset($_GET['cb'])) {
       margin-bottom: 22px
     }
 
+    /* Support notice box */
+    .support-notice {
+      display: flex;
+      align-items: flex-start;
+      gap: 11px;
+      background: linear-gradient(135deg, #e8f4fd, #f0f8ff);
+      border: 1px solid #bee3f8;
+      border-radius: 16px;
+      padding: 14px 16px;
+      margin-bottom: 22px;
+      font-size: 13px;
+      color: #1a5276;
+      line-height: 1.7;
+    }
+    .support-notice .material-icons-round {
+      font-size: 20px;
+      color: #2980b9;
+      flex-shrink: 0;
+      margin-top: 1px;
+    }
+    .support-notice strong { font-weight: 900; }
+    .support-notice a {
+      color: var(--primary);
+      font-weight: 900;
+      text-decoration: none;
+    }
+    .support-notice a:hover { text-decoration: underline; }
+
     .form-grid {
       display: grid;
       grid-template-columns: 1fr 1fr;
       gap: 14px
     }
 
-    .form-field {
-      margin-bottom: 2px
-    }
+    .form-field { margin-bottom: 2px }
 
-    .form-field.full {
-      grid-column: 1/-1
-    }
+    .form-field.full { grid-column: 1/-1 }
 
     .form-field label {
       display: block;
@@ -1023,9 +979,7 @@ if (isset($_GET['cb'])) {
       color: var(--text)
     }
 
-    .form-field input {
-      height: 48px
-    }
+    .form-field input { height: 48px }
 
     .form-field textarea {
       min-height: 96px;
@@ -1051,9 +1005,7 @@ if (isset($_GET['cb'])) {
       line-height: 1.7
     }
 
-    .error-msg.show {
-      display: block
-    }
+    .error-msg.show { display: block }
 
     .order-product-preview {
       display: flex;
@@ -1145,14 +1097,9 @@ if (isset($_GET['cb'])) {
       font-size: 14px
     }
 
-    .order-row .label {
-      color: var(--muted)
-    }
+    .order-row .label { color: var(--muted) }
 
-    .order-row .value {
-      font-weight: 900;
-      text-align: left
-    }
+    .order-row .value { font-weight: 900; text-align: left }
 
     .order-total {
       display: flex;
@@ -1188,57 +1135,9 @@ if (isset($_GET['cb'])) {
       animation: spin .7s linear infinite
     }
 
-    @keyframes spin {
-      to {
-        transform: rotate(360deg)
-      }
-    }
+    @keyframes spin { to { transform: rotate(360deg) } }
 
-    /* ── RESULT + TOAST ── */
-    .result-card {
-      background: #fff;
-      border-radius: var(--radius-xl);
-      box-shadow: var(--shadow-2);
-      max-width: 440px;
-      margin: 20px auto 0;
-      padding: 38px 30px;
-      text-align: center
-    }
-
-    .result-icon {
-      width: 72px;
-      height: 72px;
-      border-radius: 50%;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 36px;
-      margin: 0 auto 20px
-    }
-
-    .result-icon.success {
-      background: #e6f4ea;
-      color: var(--success)
-    }
-
-    .result-icon.fail {
-      background: #fce8e6;
-      color: var(--danger)
-    }
-
-    .result-card h3 {
-      font-size: 22px;
-      font-weight: 900;
-      margin-bottom: 8px
-    }
-
-    .result-card p {
-      font-size: 14px;
-      color: var(--muted);
-      line-height: 1.8;
-      margin-bottom: 24px
-    }
-
+    /* ── TOAST ── */
     .toast {
       position: fixed;
       bottom: 24px;
@@ -1263,77 +1162,99 @@ if (isset($_GET['cb'])) {
       transform: translateX(-50%) translateY(0)
     }
 
+    /* ── FOOTER ── */
+    .footer {
+      background: #fff;
+      border-top: 1px solid var(--line);
+      padding: 22px 24px;
+      text-align: center;
+    }
+
+    .footer-inner {
+      max-width: 1100px;
+      margin: 0 auto;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+    }
+
+    .footer-brand {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      font-weight: 900;
+      font-size: 16px;
+      color: var(--primary);
+      text-decoration: none;
+    }
+
+    .footer-brand .logo-mark {
+      width: 34px;
+      height: 34px;
+      border-radius: 11px;
+    }
+
+    .footer-brand .logo-mark .material-icons-round {
+      font-size: 19px;
+    }
+
+    .footer-contacts {
+      display: flex;
+      align-items: center;
+      gap: 20px;
+      flex-wrap: wrap;
+    }
+
+    .footer-contact-item {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--muted);
+      text-decoration: none;
+      transition: color .2s;
+    }
+
+    .footer-contact-item .material-icons-round {
+      font-size: 17px;
+      color: var(--primary);
+    }
+
+    .footer-contact-item:hover { color: var(--primary); }
+
+    .footer-copy {
+      font-size: 12px;
+      color: #b0b8c8;
+      font-weight: 500;
+    }
+
     /* ── RESPONSIVE ── */
     @media(max-width:860px) {
-      .hero-art {
-        display: none
-      }
-
-      .hero {
-        min-height: 285px
-      }
-
-      .hero-inner {
-        padding: 34px 20px
-      }
-
-      .checkout-grid {
-        grid-template-columns: 1fr
-      }
-
-      .order-summary {
-        order: -1
-      }
-
-      .header-pill {
-        display: none
-      }
-
-      .form-grid {
-        grid-template-columns: 1fr
-      }
-
-    .products-grid {
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-    }
-    
-    .product-card-img {
-      aspect-ratio: 4 / 3;
-      height: auto;
-    }
-
-      .steps-section {
-        padding-inline: 14px
-      }
-
-      .panels {
-        padding-inline: 14px
-      }
-
-      .step-label {
-        font-size: 11px
-      }
-
-      .steps-shell {
-        padding: 16px 8px 12px
-      }
-
+      .hero-art { display: none }
+      .hero { min-height: 285px }
+      .hero-inner { padding: 34px 20px }
+      .checkout-grid { grid-template-columns: 1fr }
+      .order-summary { order: -1 }
+      .header-pill { display: none }
+      .form-grid { grid-template-columns: 1fr }
+      .products-grid { grid-template-columns: repeat(2, minmax(0, 1fr)) }
+      .product-card-img { aspect-ratio: 4 / 3; height: auto }
+      .steps-section { padding-inline: 14px }
+      .panels { padding-inline: 14px }
+      .step-label { font-size: 11px }
+      .steps-shell { padding: 16px 8px 12px }
       .steps-bar::before,
-      .steps-progress {
-        right: calc(16.666% + 16px);
-        left: calc(16.666% + 16px)
-      }
+      .steps-progress { right: calc(16.666% + 16px); left: calc(16.666% + 16px) }
+      .footer-inner { flex-direction: column; text-align: center }
+      .footer-contacts { justify-content: center }
     }
-    
-    @media (max-width: 480px) {
-      .products-grid {
-        grid-template-columns: 1fr;
-      }
-    
-      .product-card-img {
-        aspect-ratio: 4 / 3;
-        height: auto;
-      }
+
+    @media(max-width:480px) {
+      .products-grid { grid-template-columns: 1fr }
+      .product-card-img { aspect-ratio: 4 / 3; height: auto }
     }
   </style>
 </head>
@@ -1345,8 +1266,6 @@ if (isset($_GET['cb'])) {
     <a href="/" class="header-logo">
       <span class="logo-mark">
         <span class="material-icons-round">rocket_launch</span>
-        <!-- اگر لوگو داشتی، خط پایین را فعال کن و آدرس را عوض کن: -->
-        <!-- <img src="assets/logo.png" alt="JetStars Logo"> -->
       </span>
       <span>JetStars</span>
     </a>
@@ -1370,14 +1289,23 @@ if (isset($_GET['cb'])) {
           <span class="hero-badge"><span class="material-icons-round" style="font-size:14px">lock</span> درگاه امن</span>
           <span class="hero-badge"><span class="material-icons-round" style="font-size:14px">auto_awesome</span> تجربه ساده</span>
         </div>
+        <!-- اینماد -->
+        <div class="hero-enamad">
+          <a referrerpolicy='origin' target='_blank' href='https://trustseal.enamad.ir/?id=727430&Code=rCrYTA9k0xActWYKA9WgESESL72rgP5t'>
+            <img referrerpolicy='origin' src='https://trustseal.enamad.ir/logo.aspx?id=727430&Code=rCrYTA9k0xActWYKA9WgESESL72rgP5t' alt='اینماد' style='cursor:pointer' code='rCrYTA9k0xActWYKA9WgESESL72rgP5t'>
+          </a>
+          <span class="hero-enamad-label">نماد اعتماد<br>الکترونیکی</span>
+        </div>
       </div>
       <div class="hero-art">
         <div class="hero-card-float">
+          <div class="hcf-icon"><span class="material-icons-round">flash_on</span></div>
           <div class="hcf-label">زمان ثبت سفارش</div>
           <div class="hcf-val">کمتر از ۱ دقیقه</div>
           <div class="hcf-sub">بدون ورود و ثبت‌نام</div>
         </div>
         <div class="hero-card-float">
+          <div class="hcf-icon"><span class="material-icons-round">verified_user</span></div>
           <div class="hcf-label">پرداخت</div>
           <div class="hcf-val">امن و سریع</div>
           <div class="hcf-sub">انتقال مستقیم به درگاه</div>
@@ -1387,7 +1315,7 @@ if (isset($_GET['cb'])) {
   </section>
 
   <!-- STEPS BAR -->
-  <div class="steps-section">
+  <div class="steps-section reveal">
     <div class="steps-shell">
       <div class="steps-bar" id="steps-bar">
         <div class="steps-progress" id="steps-progress" data-step="1"></div>
@@ -1412,11 +1340,11 @@ if (isset($_GET['cb'])) {
 
     <!-- PANEL 1: PRODUCTS -->
     <div class="panel visible" id="products-panel">
-      <div class="section-title">محصولات</div>
-      <div class="section-sub">روی محصول کلیک کنید؛ مستقیم وارد مرحله مشخصات می‌شوید.</div>
+      <div class="section-title reveal">محصولات</div>
+      <div class="section-sub reveal">روی محصول کلیک کنید؛ مستقیم وارد مرحله مشخصات می‌شوید.</div>
       <div class="products-grid">
-        <?php foreach ($products as $p): ?>
-          <div class="product-card" onclick="selectProduct(<?= $p['id'] ?>, this)" data-id="<?= $p['id'] ?>">
+        <?php foreach ($products as $i => $p): ?>
+          <div class="product-card reveal stagger-<?= ($i % 9) + 1 ?>" onclick="selectProduct(<?= $p['id'] ?>, this)" data-id="<?= $p['id'] ?>">
             <div class="product-card-check"><span class="material-icons-round">check</span></div>
             <img src="<?= htmlspecialchars($p['img']) ?>" class="product-card-img" alt="<?= htmlspecialchars($p['title']) ?>">
             <div class="product-card-body">
@@ -1432,13 +1360,22 @@ if (isset($_GET['cb'])) {
 
     <!-- PANEL 2: CUSTOMER INFO + PAY -->
     <div class="panel" id="details-panel">
-      <div class="section-title">مشخصات سفارش</div>
-      <div class="section-sub">اطلاعات را تکمیل کنید، تعداد را تنظیم کنید و پرداخت را بزنید.</div>
+      <div class="section-title">تکمیل اطلاعات</div>
+      <div class="section-sub">اطلاعات را وارد کنید، تعداد را تنظیم کنید و پرداخت را انجام دهید.</div>
 
       <div class="checkout-grid">
         <div class="checkout-card">
-          <h3>اطلاعات خریدار</h3>
-          <p>این اطلاعات برای ثبت و پیگیری سفارش ذخیره می‌شود. ورود و ثبت‌نام حذف شده است.</p>
+          <h3>تکمیل اطلاعات</h3>
+
+          <!-- Support Notice -->
+          <div class="support-notice">
+            <span class="material-icons-round">send</span>
+            <span>بعد از خرید، لطفاً به آیدی پشتیبان ما در تلگرام
+              <a href="https://t.me/miladrajabi2002" target="_blank">@miladrajabi2002</a>
+              پیام دهید تا سفارش شما ارسال شود.
+            </span>
+          </div>
+
           <div class="form-grid">
             <div class="form-field">
               <label for="customer-name">نام و نام خانوادگی *</label>
@@ -1453,12 +1390,8 @@ if (isset($_GET['cb'])) {
               <input type="tel" id="customer-phone" inputmode="numeric" autocomplete="tel" placeholder="09123456789">
             </div>
             <div class="form-field">
-              <label for="customer-national">کد ملی *</label>
-              <input type="text" id="customer-national" inputmode="numeric" maxlength="10" placeholder="۱۰ رقم">
-            </div>
-            <div class="form-field full">
-              <label for="customer-address">آدرس *</label>
-              <textarea id="customer-address" placeholder="استان، شهر، آدرس کامل"></textarea>
+              <label for="customer-telegram">آیدی تلگرام</label>
+              <input type="text" id="customer-telegram" placeholder="@username">
             </div>
             <div class="form-field full">
               <label for="customer-notes">توضیحات اضافه</label>
@@ -1519,24 +1452,46 @@ if (isset($_GET['cb'])) {
 
   </div>
 
+  <!-- FOOTER -->
+  <footer class="footer reveal">
+    <div class="footer-inner">
+      <a href="/" class="footer-brand">
+        <span class="logo-mark">
+          <span class="material-icons-round">rocket_launch</span>
+        </span>
+        JetStars
+      </a>
+      <div class="footer-contacts">
+        <a href="https://t.me/miladrajabi2002" target="_blank" class="footer-contact-item">
+          <span class="material-icons-round">send</span>
+          @miladrajabi2002
+        </a>
+        <a href="mailto:miladrajabi2002@gmail.com" class="footer-contact-item">
+          <span class="material-icons-round">email</span>
+          miladrajabi2002@gmail.com
+        </a>
+      </div>
+      <span class="footer-copy">© ۱۴۰۴ JetStars — همه حقوق محفوظ است</span>
+    </div>
+  </footer>
+
   <!-- TOAST -->
   <div class="toast" id="toast"></div>
 
-  <!-- Payment callback result modal -->
-  <?php if ($cbMsg): ?>
-    <div id="cb-modal" style="position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:200;display:flex;align-items:center;justify-content:center" onclick="document.getElementById('cb-modal').remove()">
-      <div class="result-card" style="max-width:360px;margin:0 20px" onclick="event.stopPropagation()">
-        <div class="result-icon <?= $cbOk ? 'success' : 'fail' ?>">
-          <span class="material-icons-round"><?= $cbOk ? 'check_circle' : 'cancel' ?></span>
-        </div>
-        <h3><?= $cbOk ? 'پرداخت موفق' : 'پرداخت ناموفق' ?></h3>
-        <p><?= htmlspecialchars($cbMsg) ?></p>
-        <button class="btn btn-filled btn-pay" onclick="document.getElementById('cb-modal').remove()">بستن</button>
-      </div>
-    </div>
-  <?php endif; ?>
-
   <script>
+    /* ─── SCROLL REVEAL ─── */
+    const revealObserver = new IntersectionObserver((entries) => {
+      entries.forEach(entry => {
+        if (entry.isIntersecting) {
+          entry.target.classList.add('visible');
+        }
+      });
+    }, { threshold: 0.08, rootMargin: '0px 0px -40px 0px' });
+
+    document.querySelectorAll('.reveal, .reveal-left, .reveal-scale').forEach(el => {
+      revealObserver.observe(el);
+    });
+
     /* ─── STATE ─── */
     const PRODUCTS = <?= json_encode(array_values($products), JSON_UNESCAPED_UNICODE) ?>;
     let state = {
@@ -1553,11 +1508,16 @@ if (isset($_GET['cb'])) {
       if (n === 2 || n === 3) document.getElementById('details-panel').classList.add('visible');
       state.step = n;
       updateStepsBar(n);
+
+      // Re-observe new panel elements for reveal animations
+      setTimeout(() => {
+        document.querySelectorAll('.reveal:not(.visible), .reveal-left:not(.visible), .reveal-scale:not(.visible)').forEach(el => {
+          revealObserver.observe(el);
+        });
+      }, 50);
+
       const topTarget = n === 1 ? document.getElementById('products-panel') : document.getElementById('details-panel');
-      topTarget.scrollIntoView({
-        behavior: 'smooth',
-        block: 'start'
-      });
+      topTarget.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
 
     function updateStepsBar(n) {
@@ -1578,7 +1538,7 @@ if (isset($_GET['cb'])) {
       state.quantity = 1;
       prepareOrderPanel();
       goToStep(2);
-      showToast('محصول انتخاب شد؛ مشخصات سفارش را وارد کنید.');
+      showToast('محصول انتخاب شد؛ مشخصات را تکمیل کنید.');
     }
 
     function getProduct(id) {
@@ -1623,17 +1583,15 @@ if (isset($_GET['cb'])) {
         name: document.getElementById('customer-name').value.trim(),
         email: document.getElementById('customer-email').value.trim(),
         phone: document.getElementById('customer-phone').value.trim(),
-        national_code: document.getElementById('customer-national').value.trim(),
-        address: document.getElementById('customer-address').value.trim(),
+        telegram: document.getElementById('customer-telegram').value.trim(),
         notes: document.getElementById('customer-notes').value.trim(),
       };
     }
 
     function validateCustomer(c) {
-      if (!c.name || !c.email || !c.phone || !c.national_code || !c.address) return 'نام، ایمیل، شماره تماس، کد ملی و آدرس الزامی است.';
+      if (!c.name || !c.email || !c.phone) return 'نام، ایمیل و شماره تماس الزامی است.';
       if (!/^\S+@\S+\.\S+$/.test(c.email)) return 'ایمیل واردشده معتبر نیست.';
       if (c.phone.replace(/\D/g, '').length < 10) return 'شماره تماس معتبر نیست.';
-      if (c.national_code.replace(/\D/g, '').length !== 10) return 'کد ملی باید ۱۰ رقم باشد.';
       return '';
     }
 
@@ -1667,14 +1625,10 @@ if (isset($_GET['cb'])) {
         fd.append('quantity', state.quantity);
         Object.entries(customer).forEach(([key, val]) => fd.append(key, val));
 
-        // چون index.php داخل ریشه پروژه است، درخواست را به همان صفحه فعلی می‌فرستیم.
-        // این روش هم روی لوکال، هم هاست، هم داخل ساب‌فولدر درست کار می‌کند.
         const res = await fetch(window.location.pathname || 'index.php', {
           method: 'POST',
           body: fd,
-          headers: {
-            'X-Requested-With': 'XMLHttpRequest'
-          }
+          headers: { 'X-Requested-With': 'XMLHttpRequest' }
         });
 
         const text = await res.text();
@@ -1682,7 +1636,7 @@ if (isset($_GET['cb'])) {
         try {
           data = JSON.parse(text);
         } catch (parseError) {
-          throw new Error('پاسخ سرور JSON نبود. مسیر includes/functions.php یا خطای PHP را بررسی کن.');
+          throw new Error('پاسخ سرور JSON نبود.');
         }
 
         if (!res.ok || !data.ok) {
@@ -1690,12 +1644,10 @@ if (isset($_GET['cb'])) {
         }
 
         state.orderId = data.order_id;
-        showToast('سفارش ثبت شد؛ در حال انتقال به صفحه پرداخت...');
+        showToast('سفارش ثبت شد؛ در حال انتقال به درگاه پرداخت...');
 
-        // اتصال به فایل درگاه شما: /pay/pay.php
-        // pay.php خودش order_id را می‌گیرد و کاربر را به payment_link منتقل می‌کند.
         setTimeout(() => {
-          window.location.href = 'pay/pay.php?order_id=' + encodeURIComponent(state.orderId); 
+          window.location.href = 'pay/pay.php?order_id=' + encodeURIComponent(state.orderId);
         }, 350);
 
       } catch (e) {
